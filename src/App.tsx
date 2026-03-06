@@ -21,7 +21,8 @@ import {
   Trash2,
   AlertCircle,
   Map as MapIcon,
-  Navigation
+  Navigation,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -31,6 +32,7 @@ const App = () => {
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
   const [userData, setUserData] = useState({ name: '', whatsapp: '' });
+  const [errors, setErrors] = useState({ name: '', whatsapp: '' });
   const [paymentMethod, setPaymentMethod] = useState('');
   const [copied, setCopied] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -43,6 +45,65 @@ const App = () => {
   const PIX_KEY = "28.668.020/0001-54"; 
   const MAP_URL = "https://share.google/IbVRNpPSDgP0sZvrQ";
   const PROMO_LIMIT = 200;
+  const EVENT_DATE = new Date('2026-09-19T17:00:00');
+
+  // Componente de Contador Regressivo
+  const Countdown = () => {
+    const [timeLeft, setTimeLeft] = useState({
+      days: 0, hours: 0, minutes: 0, seconds: 0, isOver: false
+    });
+
+    useEffect(() => {
+      const timer = setInterval(() => {
+        const now = new Date().getTime();
+        const distance = EVENT_DATE.getTime() - now;
+
+        if (distance < 0) {
+          setTimeLeft(prev => ({ ...prev, isOver: true }));
+          clearInterval(timer);
+          return;
+        }
+
+        setTimeLeft({
+          days: Math.floor(distance / (1000 * 60 * 60 * 24)),
+          hours: Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+          minutes: Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)),
+          seconds: Math.floor((distance % (1000 * 60)) / 1000),
+          isOver: false
+        });
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }, []);
+
+    if (timeLeft.isOver) return (
+      <div className="bg-orange-600/20 border border-orange-500/50 p-3 rounded-xl text-center">
+        <span className="text-sm font-black uppercase italic text-orange-500">O EVENTO COMEÇOU! 🌅✨</span>
+      </div>
+    );
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 px-1">
+          <Clock size={14} className="text-orange-500" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500 italic">Contagem Regressiva</span>
+        </div>
+        <div className="flex gap-2 justify-between">
+          {[
+            { label: 'Dias', value: timeLeft.days },
+            { label: 'Horas', value: timeLeft.hours },
+            { label: 'Min', value: timeLeft.minutes },
+            { label: 'Seg', value: timeLeft.seconds },
+          ].map((item, idx) => (
+            <div key={idx} className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl p-2 text-center shadow-inner">
+              <div className="text-xl font-black text-white leading-none italic">{item.value.toString().padStart(2, '0')}</div>
+              <div className="text-[7px] text-neutral-500 uppercase font-black tracking-tighter mt-1">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   // URL da Imagem do Banner (Logo Oficial)
   const LOGO_URL = "https://i.postimg.cc/zff0nPVL/LOGO-EVENTO-SUNSET-360-3-EDICAO-01.png"; 
@@ -141,13 +202,50 @@ const App = () => {
   const startPurchase = (type: string) => {
     setTicketType(type);
     setTicketsCount(1);
+    setErrors({ name: '', whatsapp: '' });
     setView('buy');
   };
 
   const handlePurchase = () => {
-    if (userData.name && userData.whatsapp) {
+    const newErrors = { name: '', whatsapp: '' };
+    let isValid = true;
+
+    // Validação do Nome
+    if (userData.name.trim().length < 3) {
+      newErrors.name = 'O nome deve ter pelo menos 3 caracteres.';
+      isValid = false;
+    }
+
+    // Validação do WhatsApp (apenas números, deve ter 10 ou 11 dígitos)
+    const whatsappDigits = userData.whatsapp.replace(/\D/g, '');
+    if (whatsappDigits.length < 10 || whatsappDigits.length > 11) {
+      newErrors.whatsapp = 'Informe um WhatsApp válido com DDD (ex: 64999999999).';
+      isValid = false;
+    }
+
+    setErrors(newErrors);
+
+    if (isValid) {
       setView('payment');
     }
+  };
+
+  const formatWhatsApp = (value: string) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+  };
+
+  const handleWhatsAppChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatWhatsApp(e.target.value);
+    setUserData({ ...userData, whatsapp: formatted });
+    if (errors.whatsapp) setErrors({ ...errors, whatsapp: '' });
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUserData({ ...userData, name: e.target.value });
+    if (errors.name) setErrors({ ...errors, name: '' });
   };
 
   const confirmPayment = (method: string) => {
@@ -409,18 +507,24 @@ const App = () => {
                 <div className="bg-neutral-900 border border-neutral-800 p-4 rounded-xl shadow-xl">
                   <label className="block text-[10px] uppercase font-bold text-neutral-500 mb-2 tracking-widest font-black italic">Dados do Titular</label>
                   <div className="space-y-3">
-                      <input 
-                        type="text" value={userData.name}
-                        onChange={(e) => setUserData({...userData, name: e.target.value})}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic"
-                        placeholder="Nome Completo"
-                      />
-                      <input 
-                        type="tel" value={userData.whatsapp}
-                        onChange={(e) => setUserData({...userData, whatsapp: e.target.value})}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic"
-                        placeholder="WhatsApp (Ex: 64999999999)"
-                      />
+                      <div>
+                        <input 
+                          type="text" value={userData.name}
+                          onChange={handleNameChange}
+                          className={`w-full bg-neutral-950 border ${errors.name ? 'border-red-500' : 'border-neutral-800'} rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic`}
+                          placeholder="Nome Completo"
+                        />
+                        {errors.name && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.name}</p>}
+                      </div>
+                      <div>
+                        <input 
+                          type="tel" value={userData.whatsapp}
+                          onChange={handleWhatsAppChange}
+                          className={`w-full bg-neutral-950 border ${errors.whatsapp ? 'border-red-500' : 'border-neutral-800'} rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic`}
+                          placeholder="WhatsApp (Ex: 64 99999-9999)"
+                        />
+                        {errors.whatsapp && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.whatsapp}</p>}
+                      </div>
                   </div>
                 </div>
                 <div className="bg-neutral-900 p-4 rounded-xl border border-neutral-800 flex items-center justify-between">
@@ -559,26 +663,39 @@ const App = () => {
                     <button onClick={() => setView('home')} className="bg-orange-600 text-white text-[10px] font-black py-2 px-8 rounded-full uppercase tracking-widest italic shadow-lg shadow-orange-600/20">COMPRAR AGORA</button>
                  </div>
               ) : (
-                 <div className="space-y-4">
-                   {myTickets.map((ticket) => (
-                      <div key={ticket.id} className="bg-neutral-900 p-5 rounded-2xl border-2 border-green-500/30 relative overflow-hidden shadow-2xl group">
-                          <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-green-500/20 px-2 py-1 rounded-full border border-green-500/30">
-                              <span className="relative flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                              </span>
-                              <span className="text-[8px] text-green-500 font-black uppercase tracking-widest leading-none font-bold">Compra Ativa</span>
-                          </div>
-                          <div className="absolute top-10 right-0 p-4 opacity-5 pointer-events-none group-hover:scale-110 transition-transform"><Ticket size={100} className="text-white rotate-12" /></div>
-                          <div className="relative z-10 space-y-4 font-bold">
-                              <div><h3 className="text-xl font-black text-white italic uppercase leading-tight pr-20">{TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS]}</h3><p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest italic leading-none">Sunset 360º 3ª Edição</p></div>
-                              <div className="grid grid-cols-2 gap-4 border-t border-neutral-800 pt-4 italic">
-                                  <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Titular</span><span className="text-xs text-white font-black uppercase truncate block leading-none">{ticket.name}</span></div>
-                                  <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Bilhetes</span><span className="text-xs text-white font-black leading-none">{ticket.qty} Unidade(s)</span></div>
-                              </div>
-                          </div>
-                      </div>
-                   ))}
+                 <div className="space-y-6">
+                   <Countdown />
+                   
+                   <div className="space-y-4">
+                     {myTickets.map((ticket) => (
+                        <div key={ticket.id} className="bg-neutral-900 p-5 rounded-2xl border-2 border-green-500/30 relative overflow-hidden shadow-2xl group">
+                            <div className="absolute top-4 right-4 flex flex-col items-end gap-1">
+                                <div className="flex items-center gap-1.5 bg-green-500/20 px-2 py-1 rounded-full border border-green-500/30">
+                                    <span className="relative flex h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                    </span>
+                                    <span className="text-[8px] text-green-500 font-black uppercase tracking-widest leading-none font-bold">Ativa</span>
+                                </div>
+                                <span className="text-[7px] text-neutral-500 font-black uppercase italic tracking-tighter">
+                                  ID: #{ticket.id.toString().slice(-6)}
+                                </span>
+                            </div>
+                            <div className="absolute top-10 right-0 p-4 opacity-5 pointer-events-none group-hover:scale-110 transition-transform"><Ticket size={100} className="text-white rotate-12" /></div>
+                            <div className="relative z-10 space-y-4 font-bold">
+                                <div>
+                                  <h3 className="text-xl font-black text-white italic uppercase leading-tight pr-20">{TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS]}</h3>
+                                  <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest italic leading-none">Sunset 360º 3ª Edição</p>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4 border-t border-neutral-800 pt-4 italic">
+                                    <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Titular</span><span className="text-xs text-white font-black uppercase truncate block leading-none">{ticket.name}</span></div>
+                                    <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Bilhetes</span><span className="text-xs text-white font-black leading-none">{ticket.qty} Unidade(s)</span></div>
+                                </div>
+                            </div>
+                        </div>
+                     ))}
+                   </div>
                  </div>
               )}
             </motion.div>

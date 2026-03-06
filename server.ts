@@ -25,26 +25,6 @@ db.exec(`
   )
 `);
 
-// Pre-populate with some initial data if empty
-const count = db.prepare("SELECT COUNT(*) as count FROM sales").get() as { count: number };
-if (count.count === 0) {
-  const initialSales = [
-    { name: "Rogério Negrete", type: "casadinho", qty: 2, total: 100, method: "PIX", date: "2026-03-05", status: "Ativa" },
-    { name: "Fernanda Silva", type: "individual", qty: 1, total: 30, method: "PIX", date: "2026-03-05", status: "Ativa" },
-    { name: "Alex Oliveira", type: "casadinho", qty: 1, total: 50, method: "Retirada", date: "2026-03-06", status: "Ativa" },
-    { name: "Ana Paula", type: "individual", qty: 2, total: 60, method: "PIX", date: "2026-03-06", status: "Ativa" },
-  ];
-
-  const insert = db.prepare(`
-    INSERT INTO sales (name, type, qty, total, method, date, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  initialSales.forEach(sale => {
-    insert.run(sale.name, sale.type, sale.qty, sale.total, sale.method, sale.date, sale.status);
-  });
-}
-
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
