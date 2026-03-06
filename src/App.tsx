@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import { io } from 'socket.io-client';
 import { 
   Ticket, 
   LayoutDashboard, 
@@ -56,33 +58,58 @@ const App = () => {
     casadinho: 'Casadinho'
   };
 
-  // Relatório de Vendas (Persistência com LocalStorage)
-  const [salesReport, setSalesReport] = useState<any[]>(() => {
-    const saved = localStorage.getItem('sunset_sales_report');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Relatório de Vendas (Sincronizado via WebSocket)
+  const [salesReport, setSalesReport] = useState<any[]>([]);
+  const [socket, setSocket] = useState<any>(null);
 
-  const [promoEnded, setPromoEnded] = useState(() => {
-    return localStorage.getItem('sunset_promo_ended') === 'true';
-  });
+  const [promoEnded, setPromoEnded] = useState(false);
 
   // Convites comprados nesta sessão
   const [myTickets, setMyTickets] = useState<any[]>([]);
 
-  // Efeito para persistir dados
-  React.useEffect(() => {
-    localStorage.setItem('sunset_sales_report', JSON.stringify(salesReport));
-  }, [salesReport]);
+  // Inicializar Socket.io
+  useEffect(() => {
+    const newSocket = io();
+    setSocket(newSocket);
 
-  React.useEffect(() => {
-    localStorage.setItem('sunset_promo_ended', promoEnded.toString());
+    newSocket.on('initial_sales', (sales) => {
+      setSalesReport(sales);
+    });
+
+    newSocket.on('promo_status', (status) => {
+      setPromoEnded(status);
+    });
+
+    newSocket.on('sale_added', (newSale) => {
+      setSalesReport(prev => {
+        // Evitar duplicatas
+        if (prev.find(s => s.id === newSale.id)) return prev;
+        return [newSale, ...prev];
+      });
+    });
+
+    newSocket.on('sale_deleted', (saleId) => {
+      setSalesReport(prev => prev.filter(s => s.id !== saleId));
+    });
+
+    return () => {
+      newSocket.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (socket) {
+      socket.emit('update_promo', promoEnded);
+    }
   }, [promoEnded]);
 
   const currentPrice = PRICES[ticketType as keyof typeof PRICES];
 
   // Função para excluir venda (Admin)
   const deleteSale = (id: number) => {
-    setSalesReport(salesReport.filter(sale => sale.id !== id));
+    if (socket) {
+      socket.emit('delete_sale', id);
+    }
   };
 
   // Função para copiar PIX (compatível com o ambiente)
@@ -104,7 +131,7 @@ const App = () => {
   // Notificação via WhatsApp
   const handleWhatsAppNotify = () => {
     const total = ticketsCount * currentPrice;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
@@ -125,8 +152,7 @@ const App = () => {
 
   const confirmPayment = (method: string) => {
     setPaymentMethod(method);
-    const newSale = {
-      id: Date.now(),
+    const saleData = {
       name: userData.name,
       type: ticketType,
       qty: ticketsCount,
@@ -135,8 +161,13 @@ const App = () => {
       date: new Date().toISOString().split('T')[0],
       status: 'Ativa'
     };
-    setSalesReport([...salesReport, newSale]);
-    setMyTickets([...myTickets, newSale]); 
+    
+    if (socket) {
+      socket.emit('new_sale', saleData);
+    }
+    
+    // Adicionar localmente para feedback imediato (será atualizado pelo socket)
+    setMyTickets([...myTickets, { ...saleData, id: Date.now() }]); 
     setView('success');
   };
 
@@ -431,12 +462,17 @@ const App = () => {
                       </div>
                       <h3 className="font-bold text-white uppercase tracking-tight font-black mb-1 leading-none italic">PIX COPIA E COLA</h3>
                       <p className="text-[10px] text-neutral-500 uppercase font-black tracking-widest mb-4 italic leading-none">Chave CNPJ do organizador</p>
-                      <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-3 font-bold">
+                      <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-4 font-bold">
                           <span className="text-orange-500 font-mono text-lg font-black block truncate italic">{PIX_KEY}</span>
-                          <button onClick={copyToClipboard} className={`w-full py-4 rounded-lg flex items-center justify-center gap-2 font-black uppercase text-xs transition-all ${copied ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-neutral-800 text-white hover:bg-neutral-700 active:scale-95 shadow-lg'}`}>
-                              {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                              {copied ? 'CHAVE COPIADA!' : 'COPIAR CHAVE PIX'}
-                          </button>
+                          <div className="flex items-center gap-3">
+                              <div className="bg-white p-2 rounded-lg shrink-0 shadow-lg shadow-white/10">
+                                  <QRCodeSVG value={PIX_KEY} size={80} level="H" />
+                              </div>
+                              <button onClick={copyToClipboard} className={`flex-1 py-4 rounded-lg flex items-center justify-center gap-2 font-black uppercase text-xs transition-all ${copied ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-neutral-800 text-white hover:bg-neutral-700 active:scale-95 shadow-lg'}`}>
+                                  {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                                  {copied ? 'CHAVE COPIADA!' : 'COPIAR CHAVE PIX'}
+                              </button>
+                          </div>
                       </div>
                 </div>
                 <div className="bg-neutral-900/50 border border-neutral-800 p-4 rounded-2xl text-center">
