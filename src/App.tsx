@@ -27,6 +27,7 @@ import {
   Share
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { auth } from './firebase';
 
 const App = () => {
   // Estados principais
