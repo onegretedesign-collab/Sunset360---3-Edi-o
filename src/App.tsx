@@ -22,9 +22,13 @@ import {
   AlertCircle,
   Map as MapIcon,
   Navigation,
-  Clock
+  Clock,
+  Download,
+  Share,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { auth, requestNotificationPermission } from './firebase';
 
 const App = () => {
   // Estados principais
@@ -124,6 +128,30 @@ const App = () => {
   const [socket, setSocket] = useState<any>(null);
 
   const [promoEnded, setPromoEnded] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleInstall = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+        }
+        setDeferredPrompt(null);
+      });
+    } else {
+        alert("Para instalar, toque no menu do seu navegador e escolha 'Adicionar à tela de início'.");
+    }
+  };
 
   // Convites comprados nesta sessão
   const [myTickets, setMyTickets] = useState<any[]>([]);
@@ -192,10 +220,24 @@ const App = () => {
   // Notificação via WhatsApp
   const handleWhatsAppNotify = () => {
     const total = ticketsCount * currentPrice;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
+    const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
+    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
+  };
+
+  const handleShare = async () => {
+    try {
+      await navigator.share({
+        title: 'Sunset 360º - Reserva Confirmada',
+        text: `Acabei de garantir meu lugar no Sunset 360º! Reserva confirmada para ${userData.name}.`,
+        url: window.location.href,
+      });
+    } catch (error) {
+      console.error('Error sharing:', error);
+    }
   };
 
   // Lógica de Navegação
@@ -254,6 +296,8 @@ const App = () => {
       name: userData.name,
       type: ticketType,
       qty: ticketsCount,
+      cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
+      wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
       total: ticketsCount * currentPrice,
       method: method === 'pix' ? 'PIX' : 'Retirada',
       date: new Date().toISOString().split('T')[0],
@@ -302,9 +346,17 @@ const App = () => {
           <h1 className="text-lg font-bold text-white tracking-tighter uppercase italic leading-none">SUNSET <span className="text-orange-500 font-black">360º 3ª ED.</span></h1>
         </div>
       </div>
-      <button onClick={() => setView('admin')} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
-        <LayoutDashboard size={20} />
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => requestNotificationPermission(auth.currentUser?.uid || 'anonymous')} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
+          <Bell size={20} />
+        </button>
+        <button onClick={handleInstall} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
+          <Download size={20} />
+        </button>
+        <button onClick={() => setView('admin')} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
+          <LayoutDashboard size={20} />
+        </button>
+      </div>
     </header>
   );
 
@@ -637,6 +689,9 @@ const App = () => {
               <button onClick={handleWhatsAppNotify} className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl shadow-lg shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
                 <MessageCircle size={20} /> ENVIAR DADOS E COMPROVANTE
               </button>
+              <button onClick={handleShare} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
+                <Share size={20} /> COMPARTILHAR RESERVA
+              </button>
             </motion.div>
           )}
 
@@ -757,9 +812,9 @@ const App = () => {
                       <div className="flex gap-2">
                         <button onClick={handleAdminLogout} className="text-[10px] uppercase font-black text-red-500 bg-red-500/10 px-3 py-1 rounded-full hover:bg-red-500/20 transition-all italic font-bold">Sair</button>
                         <button onClick={() => setView('home')} className="text-[10px] uppercase font-black text-neutral-600 bg-neutral-900 px-3 py-1 rounded-full hover:text-white transition-all italic shadow-inner font-bold">Fechar</button>
-                      </div>
-                   </div>
-               <div className="grid grid-cols-2 gap-3 leading-tight">
+                       </div>
+                    </div>
+                <div className="grid grid-cols-2 gap-3 leading-tight">
                   <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 shadow-lg">
                     <p className="text-neutral-500 text-[10px] uppercase font-black tracking-widest mb-1 italic">Vendas Totais</p>
                     <div className="flex items-center gap-2 text-white font-black leading-none italic"><Users size={16} className="text-orange-500" /><span className="text-2xl font-black leading-none">{totalSalesCount}</span></div>
@@ -771,6 +826,10 @@ const App = () => {
                   <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 shadow-lg">
                     <p className="text-neutral-500 text-[10px] uppercase font-black tracking-widest mb-1 italic leading-none">Faturamento</p>
                     <div className="flex items-center gap-2 font-black leading-none italic"><DollarSign size={16} className="text-orange-500" /><span className="text-2xl font-black text-orange-500 leading-none">R$ {totalRevenue}</span></div>
+                    <div className="mt-2 flex flex-col gap-0.5">
+                      <p className="text-[8px] text-neutral-600 uppercase font-bold italic">Copos: {totalCupsGiven}</p>
+                      <p className="text-[8px] text-neutral-600 uppercase font-bold italic">Pulseiras: {totalCupsGiven}</p>
+                    </div>
                   </div>
                </div>
 

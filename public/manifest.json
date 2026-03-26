@@ -1,0 +1,20 @@
+{
+  "name": "Sunset 360º",
+  "short_name": "Sunset 360",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#f97316",
+  "icons": [
+    {
+      "src": "https://i.postimg.cc/zf4sFBPC/LOGO-ICONE-APP-INSTALATION.png?v=2",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://i.postimg.cc/zf4sFBPC/LOGO-ICONE-APP-INSTALATION.png?v=2",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
