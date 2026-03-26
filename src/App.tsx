@@ -24,11 +24,9 @@ import {
   Navigation,
   Clock,
   Download,
-  Share,
-  Bell
+  Share
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, requestNotificationPermission } from './firebase';
 
 const App = () => {
   // Estados principais
@@ -347,9 +345,6 @@ const App = () => {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => requestNotificationPermission(auth.currentUser?.uid || 'anonymous')} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
-          <Bell size={20} />
-        </button>
         <button onClick={handleInstall} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
           <Download size={20} />
         </button>

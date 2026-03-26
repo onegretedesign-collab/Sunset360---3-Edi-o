@@ -5,17 +5,9 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
-import admin from "firebase-admin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Initialize Firebase Admin
-if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-  admin.initializeApp({
-    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY))
-  });
-}
 
 const db = new Database("sales.db");
 
@@ -51,33 +43,6 @@ async function startServer() {
   app.get("/api/sales", (req, res) => {
     const sales = db.prepare("SELECT * FROM sales ORDER BY id DESC").all();
     res.json(sales);
-  });
-
-  app.post("/api/send-notification", async (req, res) => {
-    const { title, body } = req.body;
-    if (!admin.apps.length) {
-      return res.status(500).json({ error: "Firebase Admin not initialized" });
-    }
-    
-    try {
-      const tokensSnapshot = await admin.firestore().collection("userTokens").get();
-      const tokens = tokensSnapshot.docs.map(doc => doc.data().token);
-      
-      if (tokens.length === 0) {
-        return res.status(404).json({ error: "No tokens found" });
-      }
-      
-      const message = {
-        notification: { title, body },
-        tokens: tokens
-      };
-      
-      const response = await admin.messaging().sendEachForMulticast(message);
-      res.json({ success: true, response });
-    } catch (error) {
-      console.error("Error sending notification:", error);
-      res.status(500).json({ error: "Failed to send notification" });
-    }
   });
 
   // Socket.io logic
