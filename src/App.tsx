@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { io } from 'socket.io-client';
 import { 
   Ticket, 
@@ -45,10 +44,10 @@ const App = () => {
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
   const EVENT_LOCATION = "Coliseu";
-  const PIX_KEY = "28.668.020/0001-54"; 
+  const PIX_KEY = "Sunset360.quiri@gmail.com"; 
   const MAP_URL = "https://share.google/IbVRNpPSDgP0sZvrQ";
   const PROMO_LIMIT = 200;
-  const EVENT_DATE = new Date('2026-09-19T17:00:00');
+  const EVENT_DATE = new Date('2026-09-19T18:00:00'); // Data definitiva do evento: 19 de Setembro de 2026 às 18:00h
 
   // Componente de Contador Regressivo
   const Countdown = () => {
@@ -86,21 +85,41 @@ const App = () => {
     );
 
     return (
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 px-1">
-          <Clock size={14} className="text-orange-500" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500 italic">Contagem Regressiva</span>
+      <div className="space-y-4">
+        <div className="px-1">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.8)]"></div>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500 italic">Contagem Regressiva</span>
+          </div>
+          <div className="bg-gradient-to-r from-orange-600 to-orange-500 p-[1px] rounded-2xl shadow-lg shadow-orange-600/20">
+            <div className="bg-black rounded-[15px] p-4 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest italic leading-none mb-1">Data do Evento</span>
+                <h3 className="text-[26px] font-black text-white italic uppercase tracking-tighter leading-none whitespace-nowrap">19 SETEMBRO</h3>
+              </div>
+              <div className="h-10 w-[1px] bg-neutral-800 mx-4"></div>
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest italic leading-none mb-1">Início</span>
+                <span className="text-[26px] font-black text-white italic uppercase tracking-tighter leading-none whitespace-nowrap">18:00H</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-2 justify-between">
+        <div className="flex gap-2.5 justify-between">
           {[
             { label: 'Dias', value: timeLeft.days },
             { label: 'Horas', value: timeLeft.hours },
             { label: 'Min', value: timeLeft.minutes },
             { label: 'Seg', value: timeLeft.seconds },
           ].map((item, idx) => (
-            <div key={idx} className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl p-2 text-center shadow-inner">
-              <div className="text-xl font-black text-white leading-none italic">{item.value.toString().padStart(2, '0')}</div>
-              <div className="text-[7px] text-neutral-500 uppercase font-black tracking-tighter mt-1">{item.label}</div>
+            <div key={idx} className="flex-1 bg-gradient-to-b from-neutral-900 to-black border border-neutral-800/50 rounded-2xl p-3 text-center shadow-xl relative group">
+              <div className="absolute inset-0 bg-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl"></div>
+              <div className="text-2xl font-black text-white leading-none italic tracking-tighter drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]">
+                {item.value.toString().padStart(2, '0')}
+              </div>
+              <div className="text-[7px] text-orange-500/70 uppercase font-black tracking-widest mt-1.5 italic">
+                {item.label}
+              </div>
             </div>
           ))}
         </div>
@@ -221,7 +240,7 @@ const App = () => {
     const total = ticketsCount * currentPrice;
     const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
     const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
@@ -424,6 +443,23 @@ const App = () => {
                 </div>
               </div>
 
+              {/* CONTAGEM REGRESSIVA */}
+              <div className="px-1">
+                <Countdown />
+              </div>
+
+              {/* IMAGEM PROMOCIONAL */}
+              <div className="px-1">
+                <div className="rounded-3xl overflow-hidden border border-neutral-800 bg-black shadow-2xl">
+                  <img 
+                    src="https://i.postimg.cc/bwNcM5kp/ARTE-SUNSET-STORY.jpg" 
+                    alt="Arte Sunset Story" 
+                    className="w-full h-auto block"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              </div>
+
               {/* PROMOÇÃO COPO PERSONALIZADO */}
               {!isPromoSoldOut ? (
                 <div className="bg-orange-600/10 border-2 border-orange-600 rounded-2xl p-4 relative overflow-hidden">
@@ -616,15 +652,10 @@ const App = () => {
                       <p className="text-[10px] text-neutral-500 uppercase font-black tracking-widest mb-4 italic leading-none">Chave CNPJ do organizador</p>
                       <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-4 font-bold">
                           <span className="text-orange-500 font-mono text-lg font-black block truncate italic">{PIX_KEY}</span>
-                          <div className="flex items-center gap-3">
-                              <div className="bg-white p-2 rounded-lg shrink-0 shadow-lg shadow-white/10">
-                                  <QRCodeSVG value={PIX_KEY} size={80} level="H" />
-                              </div>
-                              <button onClick={copyToClipboard} className={`flex-1 py-4 rounded-lg flex items-center justify-center gap-2 font-black uppercase text-xs transition-all ${copied ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-neutral-800 text-white hover:bg-neutral-700 active:scale-95 shadow-lg'}`}>
-                                  {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                                  {copied ? 'CHAVE COPIADA!' : 'COPIAR CHAVE PIX'}
-                              </button>
-                          </div>
+                          <button onClick={copyToClipboard} className={`w-full py-4 rounded-lg flex items-center justify-center gap-2 font-black uppercase text-xs transition-all ${copied ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-neutral-800 text-white hover:bg-neutral-700 active:scale-95 shadow-lg'}`}>
+                              {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                              {copied ? 'CHAVE COPIADA!' : 'COPIAR CHAVE PIX'}
+                          </button>
                       </div>
                 </div>
                 <div className="bg-neutral-900/50 border border-neutral-800 p-4 rounded-2xl text-center">
