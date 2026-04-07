@@ -860,6 +860,16 @@ const App = () => {
                       <button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-sm transition-transform active:scale-95 italic mt-2">
                         ENTRAR NO PAINEL
                       </button>
+
+                      <div className="text-center">
+                        <button 
+                          type="button"
+                          onClick={() => alert('Funcionalidade de recuperação de senha não implementada. Entre em contato com o suporte técnico.')}
+                          className="text-[10px] text-neutral-500 hover:text-orange-500 uppercase font-black tracking-widest italic transition-colors"
+                        >
+                          Esqueceu a senha?
+                        </button>
+                      </div>
                     </form>
                  </div>
                ) : (
