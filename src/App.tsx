@@ -26,6 +26,7 @@ import {
   Share
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { QRCodeSVG } from 'qrcode.react';
 import { auth } from './firebase';
 
 const App = () => {
@@ -40,6 +41,7 @@ const App = () => {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({ login: '', password: '' });
   const [loginError, setLoginError] = useState('');
+  const [showQRCode, setShowQRCode] = useState(false);
 
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
@@ -719,6 +721,34 @@ const App = () => {
               <button onClick={handleShare} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
                 <Share size={20} /> COMPARTILHAR RESERVA
               </button>
+
+              <button 
+                onClick={() => setShowQRCode(!showQRCode)} 
+                className="w-full bg-neutral-900 border border-neutral-800 hover:border-orange-500 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic"
+              >
+                <Smartphone size={20} /> {showQRCode ? 'OCULTAR QR CODE' : 'GERAR QR CODE'}
+              </button>
+
+              <AnimatePresence>
+                {showQRCode && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-2xl">
+                      <QRCodeSVG 
+                        value={window.location.href} 
+                        size={200}
+                        level="H"
+                        includeMargin={true}
+                      />
+                      <p className="text-black text-[10px] font-black uppercase tracking-widest italic leading-none">Aponte a câmera para compartilhar</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           )}
 
