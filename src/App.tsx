@@ -42,11 +42,13 @@ const App = () => {
   const [adminCredentials, setAdminCredentials] = useState({ login: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [showQRCode, setShowQRCode] = useState(false);
+  const [adminSearch, setAdminSearch] = useState('');
 
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
   const EVENT_LOCATION = "Coliseu";
   const PIX_KEY = "Sunset360.quiri@gmail.com"; 
+  const OFFICIAL_URL = "http://vendassunset360quiri.com.br/";
   const MAP_URL = "https://share.google/IbVRNpPSDgP0sZvrQ";
   const PROMO_LIMIT = 200;
   const EVENT_DATE = new Date('2026-09-19T18:00:00'); // Data definitiva do evento: 19 de Setembro de 2026 às 18:00h
@@ -242,7 +244,7 @@ const App = () => {
     const total = ticketsCount * currentPrice;
     const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
     const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A🌐 *Garanta o seu também em:*%0A${OFFICIAL_URL}%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
@@ -253,7 +255,7 @@ const App = () => {
       await navigator.share({
         title: 'Sunset 360º - Reserva Confirmada',
         text: `Acabei de garantir meu lugar no Sunset 360º! Reserva confirmada para ${userData.name}.`,
-        url: window.location.href,
+        url: OFFICIAL_URL,
       });
     } catch (error) {
       console.error('Error sharing:', error);
@@ -739,7 +741,7 @@ const App = () => {
                   >
                     <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-2xl">
                       <QRCodeSVG 
-                        value={window.location.href} 
+                        value={OFFICIAL_URL} 
                         size={200}
                         level="H"
                         includeMargin={true}
@@ -945,20 +947,39 @@ const App = () => {
                   )}
                </div>
                <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-2xl">
-                  <div className="p-4 border-b border-neutral-800 bg-neutral-800/30 flex justify-between items-center"><h3 className="font-black text-xs uppercase tracking-widest text-neutral-400 italic leading-tight">Lista de Ativos</h3><span className="text-[10px] text-orange-500 font-black italic tracking-tighter">{salesReport.length} PEDIDOS</span></div>
+                  <div className="p-4 border-b border-neutral-800 bg-neutral-800/30 flex justify-between items-center sm:flex-row flex-col gap-3">
+                    <h3 className="font-black text-xs uppercase tracking-widest text-neutral-400 italic leading-tight">Lista de Ativos</h3>
+                    <div className="relative w-full sm:w-48">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" size={14} />
+                      <input 
+                        type="text"
+                        placeholder="Buscar por nome ou status..."
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-9 pr-3 py-2 text-[10px] focus:border-orange-500 outline-none text-white font-bold italic"
+                        value={adminSearch}
+                        onChange={(e) => setAdminSearch(e.target.value)}
+                      />
+                    </div>
+                    <span className="text-[10px] text-orange-500 font-black italic tracking-tighter whitespace-nowrap">{salesReport.filter(s => s.name.toLowerCase().includes(adminSearch.toLowerCase()) || s.status.toLowerCase().includes(adminSearch.toLowerCase())).length} PEDIDOS</span>
+                  </div>
                   <div className="overflow-x-auto">
                     {salesReport.length === 0 ? (
                       <div className="p-10 text-center text-neutral-600 italic text-[10px] uppercase font-black">Nenhuma venda registrada ainda.</div>
                     ) : (
                       <table className="w-full text-left text-[10px] font-black uppercase tracking-tighter italic">
                         <thead><tr className="text-neutral-500 border-b border-neutral-800 uppercase bg-neutral-950/50 leading-tight">
-                            <th className="p-4 italic">Titular</th><th className="p-4 text-center italic">Tipo</th><th className="p-4 text-right italic text-orange-500">Eliminar</th>
+                            <th className="p-4 italic">Titular</th><th className="p-4 text-center italic">Tipo</th><th className="p-4 text-center italic">Status</th><th className="p-4 text-right italic text-orange-500">Eliminar</th>
                         </tr></thead>
                         <tbody className="divide-y divide-neutral-800 font-bold italic">
-                          {salesReport.map((sale) => (
+                          {salesReport.filter(sale => 
+                            sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
+                            sale.status.toLowerCase().includes(adminSearch.toLowerCase())
+                          ).map((sale) => (
                             <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
                               <td className="p-4 font-black text-white italic truncate max-w-[80px] leading-none">{sale.name}</td>
                               <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
+                              <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
+                                <span className={`${sale.status === 'Ativa' ? 'text-green-500' : 'text-neutral-500'}`}>{sale.status}</span>
+                              </td>
                               <td className="p-4 text-right"><button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all shadow-sm"><Trash2 size={16} /></button></td>
                             </tr>
                           ))}
