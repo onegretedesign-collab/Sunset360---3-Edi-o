@@ -23,7 +23,9 @@ import {
   Navigation,
   Clock,
   Download,
-  Share
+  Share,
+  ArrowUpDown,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -31,7 +33,7 @@ import { auth } from './firebase';
 
 const App = () => {
   // Estados principais
-  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin
+  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
   const [userData, setUserData] = useState({ name: '', whatsapp: '' });
@@ -43,6 +45,8 @@ const App = () => {
   const [loginError, setLoginError] = useState('');
   const [showQRCode, setShowQRCode] = useState(false);
   const [adminSearch, setAdminSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+  const [statusFilter, setStatusFilter] = useState('Todos');
 
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
@@ -203,6 +207,10 @@ const App = () => {
       setSalesReport(prev => prev.filter(s => s.id !== saleId));
     });
 
+    newSocket.on('sale_updated', (updatedData) => {
+      setSalesReport(prev => prev.map(s => s.id === updatedData.id ? { ...s, ...updatedData } : s));
+    });
+
     return () => {
       newSocket.close();
     };
@@ -316,6 +324,7 @@ const App = () => {
     setPaymentMethod(method);
     const saleData = {
       name: userData.name,
+      whatsapp: userData.whatsapp.replace(/\D/g, ''),
       type: ticketType,
       qty: ticketsCount,
       cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
@@ -350,12 +359,81 @@ const App = () => {
     setAdminCredentials({ login: '', password: '' });
     setView('home');
   };
+
+  const confirmDelivery = (sale: any) => {
+    if (!confirm(`Confirmar entrega das pulseiras para ${sale.name}?`)) return;
+
+    if (socket) {
+      socket.emit('confirm_delivery', sale.id);
+      
+      // Notificação via WhatsApp
+      const message = `*CONFIRMAÇÃO DE ENTREGA* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos que você acaba de retirar suas pulseiras para o *Sunset 360º 3ª Edição*! 🌅✨%0A%0ATudo pronto para o evento! Nos vemos lá!%0A%0A📍 *Local:* ${EVENT_LOCATION}%0A📅 *Data:* 19 de Setembro%0A%0A📸 *Siga-nos:* https://www.instagram.com/sunset360_3edicao`;
+      
+      const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
+      window.open(waUrl, '_blank');
+    }
+  };
   const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
   const casadinhoSalesCount = salesReport.filter(sale => sale.type === 'casadinho').reduce((acc, sale) => acc + sale.qty, 0);
   const totalCupsGiven = (individualSalesCount * 1) + (casadinhoSalesCount * 2);
   const totalSalesCount = individualSalesCount + casadinhoSalesCount;
   const totalRevenue = salesReport.reduce((acc, sale) => acc + sale.total, 0);
   const isPromoSoldOut = promoEnded || totalCupsGiven >= PROMO_LIMIT;
+
+  const handleSort = (key: string) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const getSortedSales = (sales: any[]) => {
+    const filtered = sales.filter(sale => {
+      const matchesSearch = sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
+                           sale.status.toLowerCase().includes(adminSearch.toLowerCase());
+      const matchesStatus = statusFilter === 'Todos' || sale.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (a[sortConfig.key] < b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (a[sortConfig.key] > b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  };
+
+  const handleExportCSV = () => {
+    if (salesReport.length === 0) {
+      alert('Não há dados para exportar.');
+      return;
+    }
+
+    const headers = ['Data', 'Nome', 'WhatsApp', 'Tipo', 'Total (R$)', 'Status'];
+    const csvRows = salesReport.map(sale => [
+      sale.date,
+      `"${sale.name}"`,
+      sale.whatsapp,
+      `"${sale.type}"`,
+      sale.total,
+      `"${sale.status}"`
+    ].join(','));
+
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `vendas_sunset360_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const Header = () => (
     <header className="bg-black border-b border-orange-500/30 p-4 sticky top-0 z-50 flex justify-between items-center">
@@ -946,6 +1024,15 @@ const App = () => {
                      </div>
                   )}
                </div>
+
+               <div className="flex gap-2">
+                 <button 
+                    onClick={() => setView('admin_history')}
+                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-[10px] transition-transform active:scale-95 italic flex items-center justify-center gap-2"
+                 >
+                    <ClipboardList size={16} /> VER HISTÓRICO COMPLETO
+                 </button>
+               </div>
                <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-2xl">
                   <div className="p-4 border-b border-neutral-800 bg-neutral-800/30 flex justify-between items-center sm:flex-row flex-col gap-3">
                     <h3 className="font-black text-xs uppercase tracking-widest text-neutral-400 italic leading-tight">Lista de Ativos</h3>
@@ -978,9 +1065,20 @@ const App = () => {
                               <td className="p-4 font-black text-white italic truncate max-w-[80px] leading-none">{sale.name}</td>
                               <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
                               <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
-                                <span className={`${sale.status === 'Ativa' ? 'text-green-500' : 'text-neutral-500'}`}>{sale.status}</span>
+                                <span className={`${sale.status === 'Ativa' ? 'text-green-500' : sale.status === 'Entregue' ? 'text-blue-500' : 'text-neutral-500'}`}>{sale.status} {sale.status === 'Entregue' && '✅'}</span>
                               </td>
-                              <td className="p-4 text-right"><button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all shadow-sm"><Trash2 size={16} /></button></td>
+                              <td className="p-4 text-right flex justify-end gap-2">
+                                {sale.status !== 'Entregue' && (
+                                  <button 
+                                    onClick={() => confirmDelivery(sale)} 
+                                    className="p-2 text-neutral-700 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all shadow-sm"
+                                    title="Confirmar Entrega"
+                                  >
+                                    <CheckCircle2 size={16} />
+                                  </button>
+                                )}
+                                <button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all shadow-sm"><Trash2 size={16} /></button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -992,6 +1090,113 @@ const App = () => {
            )}
         </motion.div>
       )}
+
+          {/* HISTÓRICO COMPLETO ADMIN */}
+          {view === 'admin_history' && (
+            <motion.div 
+              key="admin_history"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              className="space-y-6 font-bold italic"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setView('admin')} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={20}/></button>
+                  <h2 className="text-xl font-black italic uppercase tracking-tighter text-white leading-tight font-bold">Histórico de Vendas</h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={handleExportCSV}
+                    className="flex items-center gap-2 bg-neutral-800 hover:bg-neutral-700 text-white font-black text-[10px] px-3 py-1.5 rounded-lg border border-neutral-700 transition-all active:scale-95 uppercase tracking-widest italic"
+                  >
+                    <Download size={12} /> EXPORTAR CSV
+                  </button>
+                  <span className="text-[10px] text-orange-500 font-black italic tracking-tighter whitespace-nowrap bg-orange-500/10 px-3 py-1 rounded-full">{salesReport.length} REGISTROS</span>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 shadow-xl space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" size={16} />
+                    <input 
+                      type="text"
+                      placeholder="Buscar por nome ou status..."
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-10 pr-4 py-3 text-xs focus:border-orange-500 outline-none text-white font-bold italic"
+                      value={adminSearch}
+                      onChange={(e) => setAdminSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Filter size={14} className="text-neutral-500" />
+                    <select 
+                      className="bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-[10px] focus:border-orange-500 outline-none text-white font-bold italic w-full"
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                    >
+                      <option value="Todos">Todos os Status</option>
+                      <option value="Ativa">Ativa</option>
+                      <option value="Pendente">Pendente</option>
+                      <option value="Cancelada">Cancelada</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-2xl">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[9px] font-black uppercase tracking-tighter italic">
+                      <thead>
+                        <tr className="text-neutral-500 border-b border-neutral-800 uppercase bg-neutral-950/50 leading-tight">
+                          <th className="p-4 cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('date')}>
+                            <div className="flex items-center gap-1">Data <ArrowUpDown size={10} /></div>
+                          </th>
+                          <th className="p-4 cursor-pointer hover:text-white transition-colors" onClick={() => handleSort('name')}>
+                            <div className="flex items-center gap-1">Nome <ArrowUpDown size={10} /></div>
+                          </th>
+                          <th className="p-4 cursor-pointer hover:text-white transition-colors text-center" onClick={() => handleSort('type')}>
+                            <div className="flex items-center justify-center gap-1">Tipo <ArrowUpDown size={10} /></div>
+                          </th>
+                          <th className="p-4 cursor-pointer hover:text-white transition-colors text-right" onClick={() => handleSort('total')}>
+                            <div className="flex items-center justify-end gap-1">Total <ArrowUpDown size={10} /></div>
+                          </th>
+                          <th className="p-4 text-center">Status</th>
+                          <th className="p-4 text-right text-orange-500">Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-800 font-bold italic">
+                        {getSortedSales(salesReport).map((sale) => (
+                          <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
+                            <td className="p-4 text-neutral-400 whitespace-nowrap">{sale.date}</td>
+                            <td className="p-4 font-black text-white italic truncate max-w-[100px] leading-none">{sale.name}</td>
+                            <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
+                            <td className="p-4 text-right text-white font-black">R${sale.total}</td>
+                            <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
+                              <span className={`${sale.status === 'Ativa' ? 'text-green-500' : sale.status === 'Entregue' ? 'text-blue-500' : 'text-neutral-500'}`}>{sale.status} {sale.status === 'Entregue' && '✅'}</span>
+                            </td>
+                            <td className="p-4 text-right flex justify-end gap-2">
+                              {sale.status !== 'Entregue' && (
+                                <button 
+                                  onClick={() => confirmDelivery(sale)} 
+                                  className="p-2 text-neutral-700 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
+                                  title="Confirmar Entrega"
+                                >
+                                  <CheckCircle2 size={14} />
+                                </button>
+                              )}
+                              <button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all">
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 

@@ -16,6 +16,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    whatsapp TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL,
     qty INTEGER NOT NULL,
     total INTEGER NOT NULL,
@@ -24,6 +25,13 @@ db.exec(`
     status TEXT NOT NULL
   )
 `);
+
+// Add whatsapp column if it doesn't exist (for existing databases)
+try {
+  db.prepare("ALTER TABLE sales ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''").run();
+} catch (e) {
+  // Column already exists or other error
+}
 
 async function startServer() {
   const app = express();
@@ -55,14 +63,19 @@ async function startServer() {
     socket.emit("promo_status", promoStatus);
 
     socket.on("new_sale", (saleData) => {
-      const { name, type, qty, total, method, date, status } = saleData;
+      const { name, whatsapp, type, qty, total, method, date, status } = saleData;
       const info = db.prepare(`
-        INSERT INTO sales (name, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(name, type, qty, total, method, date, status);
+        INSERT INTO sales (name, whatsapp, type, qty, total, method, date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(name, whatsapp || '', type, qty, total, method, date, status);
       
       const newSale = { id: info.lastInsertRowid, ...saleData };
       io.emit("sale_added", newSale);
+    });
+
+    socket.on("confirm_delivery", (saleId) => {
+      db.prepare("UPDATE sales SET status = 'Entregue' WHERE id = ?").run(saleId);
+      io.emit("sale_updated", { id: saleId, status: 'Entregue' });
     });
 
     socket.on("update_promo", (status) => {
