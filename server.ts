@@ -15,6 +15,7 @@ const db = new Database("sales.db");
 db.exec(`
   CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT UNIQUE,
     name TEXT NOT NULL,
     whatsapp TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL,
@@ -26,11 +27,37 @@ db.exec(`
   )
 `);
 
-// Add whatsapp column if it doesn't exist (for existing databases)
+// Add hash column if it doesn't exist (for existing databases)
 try {
-  db.prepare("ALTER TABLE sales ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''").run();
+  const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
+  const hasHashColumn = tableInfo.some(col => col.name === 'hash');
+  
+  if (!hasHashColumn) {
+    console.log("Adding 'hash' column to sales table...");
+    db.prepare("ALTER TABLE sales ADD COLUMN hash TEXT UNIQUE").run();
+  }
 } catch (e) {
-  // Column already exists or other error
+  console.error("Error checking/adding hash column:", e);
+}
+
+// Helper to generate a random hash
+const generateHash = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+// Migrate existing records without hashes
+try {
+  const salesWithoutHash = db.prepare("SELECT id FROM sales WHERE hash IS NULL").all() as any[];
+  if (salesWithoutHash.length > 0) {
+    console.log(`Migrating ${salesWithoutHash.length} records to add hashes...`);
+    const updateHash = db.prepare("UPDATE sales SET hash = ? WHERE id = ?");
+    const migrate = db.transaction((records) => {
+      for (const record of records) {
+        updateHash.run(generateHash(), record.id);
+      }
+    });
+    migrate(salesWithoutHash);
+  }
+} catch (e) {
+  console.error("Error migrating hashes:", e);
 }
 
 async function startServer() {
@@ -64,13 +91,24 @@ async function startServer() {
 
     socket.on("new_sale", (saleData) => {
       const { name, whatsapp, type, qty, total, method, date, status } = saleData;
+      const hash = generateHash();
       const info = db.prepare(`
-        INSERT INTO sales (name, whatsapp, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(name, whatsapp || '', type, qty, total, method, date, status);
+        INSERT INTO sales (hash, name, whatsapp, type, qty, total, method, date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hash, name, whatsapp || '', type, qty, total, method, date, status);
       
-      const newSale = { id: info.lastInsertRowid, ...saleData };
+      const newSale = { id: info.lastInsertRowid, hash, ...saleData };
       io.emit("sale_added", newSale);
+      socket.emit("sale_confirmed", newSale); // Send back to the creator so they get the hash
+    });
+
+    socket.on("validate_ticket", (hash) => {
+      const ticket = db.prepare("SELECT * FROM sales WHERE hash = ?").get(hash);
+      if (ticket) {
+        socket.emit("ticket_validated", ticket);
+      } else {
+        socket.emit("ticket_invalid");
+      }
     });
 
     socket.on("confirm_delivery", (saleId) => {

@@ -25,15 +25,19 @@ import {
   Download,
   Share,
   ArrowUpDown,
-  Filter
+  Filter,
+  Maximize,
+  QrCode,
+  Scan
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { auth } from './firebase';
 
 const App = () => {
   // Estados principais
-  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history
+  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, scanner, ticket_view
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
   const [userData, setUserData] = useState({ name: '', whatsapp: '' });
@@ -47,6 +51,11 @@ const App = () => {
   const [adminSearch, setAdminSearch] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
   const [statusFilter, setStatusFilter] = useState('Todos');
+  const [scanning, setScanning] = useState(false);
+  const [scannedTicket, setScannedTicket] = useState<any>(null);
+  const [scannedError, setScannedError] = useState('');
+  const [viewedTicket, setViewedTicket] = useState<any>(null);
+  const [currentSaleHash, setCurrentSaleHash] = useState('');
 
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
@@ -209,7 +218,35 @@ const App = () => {
 
     newSocket.on('sale_updated', (updatedData) => {
       setSalesReport(prev => prev.map(s => s.id === updatedData.id ? { ...s, ...updatedData } : s));
+      if (scannedTicket && scannedTicket.id === updatedData.id) {
+        setScannedTicket((prev: any) => ({ ...prev, ...updatedData }));
+      }
     });
+
+    newSocket.on('sale_confirmed', (confirmedSale) => {
+      setCurrentSaleHash(confirmedSale.hash);
+    });
+
+    newSocket.on('ticket_validated', (ticket) => {
+      setScannedTicket(ticket);
+      setScannedError('');
+    });
+
+    newSocket.on('ticket_invalid', () => {
+      setScannedError('Convite não encontrado ou inválido.');
+      setScannedTicket(null);
+    });
+
+    // Handle URL Ticket View
+    const urlParams = new URLSearchParams(window.location.search);
+    const ticketHash = urlParams.get('ticket');
+    if (ticketHash) {
+      newSocket.emit('validate_ticket', ticketHash);
+      newSocket.once('ticket_validated', (ticket) => {
+        setViewedTicket(ticket);
+        setView('ticket_view');
+      });
+    }
 
     return () => {
       newSocket.close();
@@ -249,10 +286,15 @@ const App = () => {
 
   // Notificação via WhatsApp
   const handleWhatsAppNotify = () => {
+    if (!currentSaleHash) {
+      alert("Aguardando confirmação do servidor... tente novamente em um instante.");
+      return;
+    }
     const total = ticketsCount * currentPrice;
     const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
     const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 *Mercadão dos Óculos* (Vendedora: Fernanda)%0A📍 *Açai Tele Entregas* (Vendedor: Alex ou Esposa)%0A📍 *Rogério Negrete*%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A🌐 *Garanta o seu também em:*%0A${OFFICIAL_URL}%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    const ticketLink = `${OFFICIAL_URL}?ticket=${currentSaleHash}`;
+    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 Delivery Bebidas Geladas%0A📍 Açai Tele Entregas (Vendedor: Alex ou Esposa)%0A📍 Rogério Negrete%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A🎫 *SEU CONVITE DIGITAL (QR CODE):*%0A${ticketLink}%0A%0A🌐 *Garanta o seu também em:*%0A${OFFICIAL_URL}%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
@@ -437,7 +479,7 @@ const App = () => {
 
   const Header = () => (
     <header className="bg-black border-b border-orange-500/30 p-4 sticky top-0 z-50 flex justify-between items-center">
-      <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('home')}>
+      <div className="flex items-center gap-2 cursor-pointer" onClick={() => { window.history.pushState({}, '', '/'); setView('home'); }}>
         <div className="w-10 h-10 bg-orange-600 rounded-full flex items-center justify-center shadow-lg shadow-orange-600/20 transition-transform active:scale-90">
           <Ticket className="text-white" size={24} />
         </div>
@@ -447,15 +489,63 @@ const App = () => {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <button onClick={() => setView('scanner')} className={`p-2 rounded-full transition-colors ${view === 'scanner' ? 'bg-orange-500 text-black' : 'text-orange-500 hover:bg-orange-500/10'}`}>
+          <Scan size={20} />
+        </button>
         <button onClick={handleInstall} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
           <Download size={20} />
         </button>
-        <button onClick={() => setView('admin')} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
+        <button onClick={() => setView('admin')} className={`p-2 rounded-full transition-colors ${view === 'admin' ? 'bg-orange-500 text-black' : 'text-orange-500 hover:bg-orange-500/10'}`}>
           <LayoutDashboard size={20} />
         </button>
       </div>
     </header>
   );
+
+  const QRScannerComponent = () => {
+    useEffect(() => {
+      const scanner = new Html5QrcodeScanner(
+        "reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        /* verbose= */ false
+      );
+
+      const onScanSuccess = (decodedText: string) => {
+        // Handle the hash which might be a full URL or just the hash
+        let hash = decodedText;
+        if (decodedText.includes('ticket=')) {
+          hash = new URL(decodedText).searchParams.get('ticket') || decodedText;
+        }
+        
+        if (socket) {
+          socket.emit('validate_ticket', hash);
+        }
+        scanner.clear();
+      };
+
+      scanner.render(onScanSuccess, () => {});
+
+      return () => {
+        scanner.clear().catch(e => console.log(e));
+      };
+    }, []);
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setView('home'); setScannedTicket(null); setScannedError(''); }} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={20}/></button>
+          <h2 className="text-xl font-black italic uppercase tracking-tighter text-white leading-tight font-bold">Validar Convite</h2>
+        </div>
+        <div className="bg-neutral-900 p-2 rounded-3xl border border-neutral-800 overflow-hidden shadow-2xl relative">
+            <div id="reader" className="overflow-hidden rounded-2xl"></div>
+            <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40 flex items-center justify-center">
+                 <div className="w-60 h-60 border-2 border-orange-500/50 rounded-2xl"></div>
+            </div>
+        </div>
+        <p className="text-[10px] text-neutral-500 font-bold uppercase tracking-widest text-center italic">Posicione o QR Code no visor para autenticar</p>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-orange-500 selection:text-black">
@@ -771,13 +861,29 @@ const App = () => {
                 <h2 className="text-3xl font-black mb-2 italic uppercase tracking-tighter text-white font-black">RESERVA ATIVA!</h2>
                 <p className="text-neutral-400 text-sm leading-relaxed font-bold italic">A sua reserva para o **Sunset 360º** já está confirmada.</p>
               </div>
-              <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl flex items-start gap-3 text-left">
-                  <AlertCircle className="text-orange-500 shrink-0" size={20} />
-                  <div className="space-y-1">
-                      <p className="text-[11px] text-white font-black uppercase tracking-tight italic">Último Passo!</p>
-                      <p className="text-[10px] text-neutral-400 font-bold leading-tight">
-                          Clique no botão abaixo para abrir o WhatsApp. <span className="text-orange-500 font-black">Lembre-se de anexar seu comprovante PIX</span> manualmente na conversa.
-                      </p>
+              <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl flex flex-col gap-4 text-left">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="text-orange-500 shrink-0" size={20} />
+                    <div className="space-y-1">
+                        <p className="text-[11px] text-white font-black uppercase tracking-tight italic">Próximo Passo!</p>
+                        <p className="text-[10px] text-neutral-400 font-bold leading-tight">
+                            Clique no botão abaixo para abrir o WhatsApp. <span className="text-orange-500 font-black">Anexe seu comprovante</span> na conversa para validação.
+                        </p>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-3 border-t border-orange-500/20 space-y-2">
+                    <p className="text-[10px] text-white font-black uppercase italic tracking-tighter">Pontos de Venda e Retirada:</p>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-neutral-400 font-bold">📍 Delivery Bebidas Geladas</p>
+                      <p className="text-[10px] text-neutral-400 font-bold">📍 Açai Tele Entregas (Vendedor: Alex ou Esposa)</p>
+                      <p className="text-[10px] text-neutral-400 font-bold">📍 Rogério Negrete</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/40 p-2 rounded-xl border border-orange-500/20 flex items-center gap-2">
+                     <span className="text-[10px] font-black text-orange-500 italic">⚠️ IMPORTANTE:</span>
+                     <span className="text-[9px] text-neutral-400 font-bold leading-tight">Apresente este comprovante para retirar suas pulseiras.</span>
                   </div>
               </div>
               <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800 text-left relative overflow-hidden shadow-2xl">
@@ -1197,13 +1303,169 @@ const App = () => {
               </div>
             </motion.div>
           )}
+          {/* SCANNER VIEW */}
+          {view === 'scanner' && (
+            <motion.div 
+              key="scanner"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-6"
+            >
+              {!scannedTicket && !scannedError && <QRScannerComponent />}
+
+              {scannedError && (
+                <div className="bg-red-500/10 border-2 border-red-500 rounded-3xl p-8 text-center space-y-4">
+                  <div className="bg-red-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-red-500/30">
+                    <AlertCircle size={32} className="text-white" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-black text-white italic uppercase tracking-tighter">ERRO NA VALIDAÇÃO</h3>
+                    <p className="text-neutral-400 text-sm font-bold uppercase italic">{scannedError}</p>
+                  </div>
+                  <button onClick={() => { setScannedError(''); setScannedTicket(null); }} className="w-full bg-neutral-800 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs italic">TENTAR NOVAMENTE</button>
+                </div>
+              )}
+
+              {scannedTicket && (
+                <div className="bg-neutral-900 border-2 border-orange-500 rounded-3xl overflow-hidden shadow-2xl relative">
+                  <div className="bg-orange-600 p-6 text-center space-y-2 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-10"><QrCode size={64} className="text-white" /></div>
+                    <div className="bg-white/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-2 backdrop-blur-sm">
+                      <CheckCircle2 size={24} className="text-white" />
+                    </div>
+                    <h3 className="text-2xl font-black italic uppercase italic tracking-tighter text-white font-black leading-tight">CONVITE IDENTIFICADO</h3>
+                    <span className="bg-white px-3 py-1 rounded-full text-orange-600 font-black text-[10px] uppercase tracking-widest italic">{scannedTicket.status}</span>
+                  </div>
+                  
+                  <div className="p-6 space-y-6">
+                    <div className="space-y-4 font-black uppercase italic tracking-tighter">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-neutral-500 mb-1">Comprador</span>
+                        <span className="text-xl text-white underline decoration-orange-500/50 decoration-2 underline-offset-4">{scannedTicket.name}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-neutral-500 mb-1">Tipo</span>
+                          <span className="text-orange-500">{TICKET_LABELS[scannedTicket.type as keyof typeof TICKET_LABELS]}</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className="text-[10px] text-neutral-500 mb-1">Quantidade</span>
+                          <span className="text-white">{scannedTicket.qty} Pacote(s)</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-neutral-500 mb-1">Copos Brinde</span>
+                          <span className="text-white">{scannedTicket.qty * (scannedTicket.type === 'individual' ? 1 : 2)} UNIDADES</span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className="text-[10px] text-neutral-500 mb-1">Pulseiras</span>
+                          <span className="text-white font-black text-lg">{scannedTicket.qty * (scannedTicket.type === 'individual' ? 1 : 2)} UN</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      {scannedTicket.status !== 'Entregue' ? (
+                        <button 
+                          onClick={() => confirmDelivery(scannedTicket)} 
+                          className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-5 rounded-2xl shadow-xl shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic"
+                        >
+                          <CheckCircle2 size={24} /> CONFIRMAR ENTREGA
+                        </button>
+                      ) : (
+                        <div className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-500 font-black py-5 rounded-2xl text-sm flex items-center justify-center gap-2 uppercase italic">
+                           ENTREGA JÁ REALIZADA ✅
+                        </div>
+                      )}
+                      <button onClick={() => { setScannedTicket(null); setScannedError(''); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs italic transition-all">SCANEAR OUTRO</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* TICKET VIEW (PUBLICO) */}
+          {view === 'ticket_view' && viewedTicket && (
+            <motion.div 
+              key="ticket_view"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6 text-center italic font-bold"
+            >
+              <div className="bg-neutral-900 rounded-[40px] border border-neutral-800 p-8 shadow-2xl space-y-8 relative overflow-hidden">
+                <div className="absolute -top-10 -left-10 w-40 h-40 bg-orange-500/10 rounded-full blur-[60px]"></div>
+                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-orange-500/10 rounded-full blur-[60px]"></div>
+                
+                <div className="relative space-y-4">
+                  <div className="w-20 h-20 bg-orange-600 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-orange-600/30">
+                    <Ticket className="text-white" size={40} />
+                  </div>
+                  <div className="space-y-1">
+                    <h2 className="text-2xl font-black text-white italic uppercase tracking-tighter">CONVITE DIGITAL</h2>
+                    <p className="text-neutral-500 text-[10px] font-black uppercase tracking-widest">Sunset 360º - 3ª Edição</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-[30px] inline-block shadow-[0_0_50px_rgba(249,115,22,0.2)] ring-8 ring-white/5 relative group">
+                  <QRCodeSVG 
+                    value={`${OFFICIAL_URL}?ticket=${viewedTicket.hash}`} 
+                    size={200}
+                    level="H"
+                    includeMargin={true}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/40 backdrop-blur-sm rounded-[30px]">
+                      <Maximize size={32} className="text-orange-600" />
+                  </div>
+                </div>
+
+                <div className="space-y-4 text-left font-black uppercase italic tracking-tighter">
+                   <div className="flex flex-col p-4 bg-black/40 rounded-2xl border border-neutral-800">
+                      <span className="text-[9px] text-neutral-500 mb-1">Titular</span>
+                      <span className="text-lg text-white truncate">{viewedTicket.name}</span>
+                   </div>
+                   <div className="grid grid-cols-2 gap-3">
+                      <div className="p-4 bg-black/40 rounded-2xl border border-neutral-800">
+                         <span className="text-[9px] text-neutral-500 mb-1">Categoria</span>
+                         <span className="text-orange-500 block">{TICKET_LABELS[viewedTicket.type as keyof typeof TICKET_LABELS]}</span>
+                      </div>
+                      <div className="p-4 bg-black/40 rounded-2xl border border-neutral-800 text-right">
+                         <span className="text-[9px] text-neutral-500 mb-1">Total Items</span>
+                         <span className="text-white block">{viewedTicket.qty * (viewedTicket.type === 'individual' ? 1 : 2)} Pulseiras</span>
+                      </div>
+                   </div>
+                </div>
+
+                <div className={`p-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 ${viewedTicket.status === 'Entregue' ? 'bg-blue-600/20 text-blue-500 border border-blue-500/30' : 'bg-green-600/20 text-green-500 border border-green-500/30'}`}>
+                   {viewedTicket.status === 'Entregue' ? 'Convite já Autenticado ✅' : 'Convite Ativo • Aguardando Retirada'}
+                </div>
+              </div>
+
+              <div className="text-sm text-neutral-500 font-bold px-8 leading-tight">
+                Apresente este QR Code em um dos pontos de retirada para receber sua pulseira e copos.
+              </div>
+              
+              <button 
+                onClick={() => { window.history.pushState({}, '', '/'); setView('home'); setViewedTicket(null); }}
+                className="w-full bg-neutral-900 border border-neutral-800 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm transition-all active:scale-95 italic"
+              >
+                VOLTAR AO INÍCIO
+              </button>
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
       {/* FOOTER FIXO */}
       <nav className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md border-t border-neutral-800 p-4 flex justify-around items-center max-w-md mx-auto z-40 italic shadow-2xl shadow-black font-bold">
-        <button onClick={() => setView('home')} className={`flex flex-col items-center gap-1 transition-all ${view === 'home' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
+        <button onClick={() => { window.history.pushState({}, '', '/'); setView('home'); }} className={`flex flex-col items-center gap-1 transition-all ${view === 'home' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
           <Ticket size={22} /><span className="text-[9px] font-black uppercase tracking-tighter italic leading-none">Início</span>
+        </button>
+        <button onClick={() => setView('scanner')} className={`flex flex-col items-center gap-1 transition-all ${view === 'scanner' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
+          <Scan size={22} /><span className="text-[9px] font-black uppercase tracking-tighter italic leading-none">Scanner</span>
         </button>
         <button onClick={() => setView('my_tickets')} className={`flex flex-col items-center gap-1 transition-all ${view === 'my_tickets' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
           <div className="relative font-bold"><ClipboardList size={22} /><span className="absolute -top-1 -right-1 bg-green-500 w-2 h-2 rounded-full animate-pulse border border-black shadow-[0_0_10px_rgba(34,197,94,0.5)]"></span></div>
