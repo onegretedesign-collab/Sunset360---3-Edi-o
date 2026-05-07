@@ -2,132 +2,192 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { v4 as uuidv4 } from 'uuid';
+import * as QRCode from 'qrcode';
+import { createCanvas, loadImage } from 'canvas';
+import admin from 'firebase-admin';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("sales.db");
+// Initialize Firebase Admin
+const firebaseConfigPath = path.join(__dirname, "firebase-applet-config.json");
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
 
-// Initialize database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sales (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    hash TEXT UNIQUE,
-    name TEXT NOT NULL,
-    whatsapp TEXT NOT NULL DEFAULT '',
-    type TEXT NOT NULL,
-    qty INTEGER NOT NULL,
-    total INTEGER NOT NULL,
-    method TEXT NOT NULL,
-    date TEXT NOT NULL,
-    status TEXT NOT NULL
-  )
-`);
-
-// Add hash column if it doesn't exist (for existing databases)
-try {
-  const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
-  const hasHashColumn = tableInfo.some(col => col.name === 'hash');
-  
-  if (!hasHashColumn) {
-    console.log("Adding 'hash' column to sales table...");
-    db.prepare("ALTER TABLE sales ADD COLUMN hash TEXT UNIQUE").run();
-  }
-} catch (e) {
-  console.error("Error checking/adding hash column:", e);
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+    projectId: firebaseConfig.projectId
+  });
 }
 
-// Helper to generate a random hash
-const generateHash = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-
-// Migrate existing records without hashes
-try {
-  const salesWithoutHash = db.prepare("SELECT id FROM sales WHERE hash IS NULL").all() as any[];
-  if (salesWithoutHash.length > 0) {
-    console.log(`Migrating ${salesWithoutHash.length} records to add hashes...`);
-    const updateHash = db.prepare("UPDATE sales SET hash = ? WHERE id = ?");
-    const migrate = db.transaction((records) => {
-      for (const record of records) {
-        updateHash.run(generateHash(), record.id);
-      }
-    });
-    migrate(salesWithoutHash);
-  }
-} catch (e) {
-  console.error("Error migrating hashes:", e);
-}
+const db = admin.firestore();
+const ticketsCol = db.collection('tickets');
 
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-    },
+    cors: { origin: "*" },
   });
 
   const PORT = 3000;
   let promoStatus = false;
 
-  // API Routes
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
+  
+  // Serve public tickets
+  const ticketsDir = path.join(__dirname, 'public', 'generated_tickets');
+  if (!fs.existsSync(ticketsDir)) {
+    fs.mkdirSync(ticketsDir, { recursive: true });
+  }
 
-  app.get("/api/sales", (req, res) => {
-    const sales = db.prepare("SELECT * FROM sales ORDER BY id DESC").all();
-    res.json(sales);
+  // --- API Routes ---
+
+  // Generate Ticket with Image
+  app.post("/api/tickets/generate", async (req, res) => {
+    try {
+      const { name, whatsapp, type, qty, total, method } = req.body;
+      const hash = uuidv4();
+      const createdAt = new Date().toISOString();
+
+      // 1. Save to Firestore
+      await ticketsCol.doc(hash).set({
+        hash,
+        name,
+        whatsapp: whatsapp || '',
+        type,
+        qty,
+        total,
+        method,
+        status: 'Ativa',
+        checkedIn: false,
+        createdAt: admin.firestore.Timestamp.now()
+      });
+
+      // 2. Generate Image with QR Code
+      try {
+        // Base image URL from the app
+        const baseImageUrl = "https://i.postimg.cc/bwNcM5kp/ARTE-SUNSET-STORY.jpg";
+        const canvas = createCanvas(800, 1200); // Proportions of a story/ticket
+        const ctx = canvas.getContext('2d');
+
+        // Load background
+        const bg = await loadImage(baseImageUrl);
+        ctx.drawImage(bg, 0, 0, 800, 1200);
+
+        // QR Code generation
+        const qrData = `${process.env.OFFICIAL_URL || 'http://localhost:3000'}/?ticket=${hash}`;
+        const qrBuffer = await QRCode.toBuffer(qrData, {
+          margin: 1,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          }
+        });
+        const qrImage = await loadImage(qrBuffer);
+
+        // Draw QR box
+        const qrSize = 250;
+        const qrX = (800 - qrSize) / 2;
+        const qrY = 800; // Positioned at the bottom area
+
+        // Draw white bg for QR
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20);
+        ctx.drawImage(qrImage, qrX, qrY, qrSize, qrSize);
+
+        // Add Customer Name
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(name.toUpperCase(), 400, 750);
+        ctx.font = '20px Arial';
+        ctx.fillText(`${type.toUpperCase()} - ${qty} UN`, 400, 780);
+
+        // Save image
+        const fileName = `ticket_${hash}.png`;
+        const filePath = path.join(ticketsDir, fileName);
+        const out = fs.createWriteStream(filePath);
+        const stream = canvas.createPNGStream();
+        stream.pipe(out);
+
+        await new Promise((resolve, reject) => {
+          out.on('finish', resolve);
+          out.on('error', reject);
+        });
+
+        const imageUrl = `/generated_tickets/${fileName}`;
+        
+        // Update firestore with imageUrl
+        await ticketsCol.doc(hash).update({ imageUrl });
+
+        res.json({ success: true, hash, imageUrl });
+        
+        // Notify via socket
+        io.emit("sale_added", { id: hash, hash, name, type, qty, total, method, date: createdAt.split('T')[0], status: 'Ativa' });
+
+      } catch (imgErr) {
+        console.error("Image generation error:", imgErr);
+        res.json({ success: true, hash, imageUrl: null }); // Fallback sans image
+      }
+
+    } catch (error) {
+      console.error("Generate error:", error);
+      res.status(500).json({ error: "Failed to generate ticket" });
+    }
   });
 
-  // Socket.io logic
-  io.on("connection", (socket) => {
-    console.log("Client connected:", socket.id);
-
-    // Send initial state
-    const sales = db.prepare("SELECT * FROM sales ORDER BY id DESC").all();
-    socket.emit("initial_sales", sales);
-    socket.emit("promo_status", promoStatus);
-
-    socket.on("new_sale", (saleData) => {
-      const { name, whatsapp, type, qty, total, method, date, status } = saleData;
-      const hash = generateHash();
-      const info = db.prepare(`
-        INSERT INTO sales (hash, name, whatsapp, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, name, whatsapp || '', type, qty, total, method, date, status);
+  // Validate Ticket
+  app.post("/api/tickets/validate", async (req, res) => {
+    try {
+      const { hash } = req.body;
+      const tdoc = await ticketsCol.doc(hash).get();
       
-      const newSale = { id: info.lastInsertRowid, hash, ...saleData };
-      io.emit("sale_added", newSale);
-      socket.emit("sale_confirmed", newSale); // Send back to the creator so they get the hash
-    });
-
-    socket.on("validate_ticket", (hash) => {
-      const ticket = db.prepare("SELECT * FROM sales WHERE hash = ?").get(hash);
-      if (ticket) {
-        socket.emit("ticket_validated", ticket);
-      } else {
-        socket.emit("ticket_invalid");
+      if (!tdoc.exists) {
+        return res.status(404).json({ error: "Ticket not found" });
       }
-    });
 
-    socket.on("confirm_delivery", (saleId) => {
-      db.prepare("UPDATE sales SET status = 'Entregue' WHERE id = ?").run(saleId);
-      io.emit("sale_updated", { id: saleId, status: 'Entregue' });
-    });
+      const ticket = tdoc.data();
+      if (ticket?.checkedIn) {
+        return res.json({ success: false, alreadyUsed: true, ticket });
+      }
 
+      // Update check-in status
+      await ticketsCol.doc(hash).update({
+        checkedIn: true,
+        checkedInAt: admin.firestore.Timestamp.now()
+      });
+
+      res.json({ success: true, ticket: { ...ticket, checkedIn: true } });
+      
+      // Update stats via socket
+      io.emit("sale_updated", { id: hash, checkedIn: true });
+
+    } catch (error) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get Sales (for admin)
+  app.get("/api/sales", async (req, res) => {
+    try {
+      const snapshot = await ticketsCol.orderBy('createdAt', 'desc').get();
+      const sales = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(sales);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sales" });
+    }
+  });
+
+  // Socket.io for real-time legacy support (if needed)
+  io.on("connection", (socket) => {
     socket.on("update_promo", (status) => {
       promoStatus = status;
       io.emit("promo_status", status);
-    });
-
-    socket.on("delete_sale", (saleId) => {
-      db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
-      io.emit("sale_deleted", saleId);
-    });
-
-    socket.on("disconnect", () => {
-      console.log("Client disconnected:", socket.id);
     });
   });
 
@@ -147,11 +207,9 @@ async function startServer() {
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   });
 }
 
-console.log("Starting server process...");
 startServer().catch(err => {
   console.error("Failed to start server:", err);
 });
