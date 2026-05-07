@@ -388,11 +388,11 @@ const App = () => {
         setCurrentSaleHash(result.hash);
         setView('success');
       } else {
-        alert("Erro ao gerar convite. Tente novamente.");
+        alert(`Erro ao gerar convite: ${result.error || 'Erro desconhecido'}`);
       }
     } catch (error) {
       console.error("Payment error:", error);
-      alert("Erro de conexão com o servidor.");
+      alert(`Erro de conexão com o servidor: ${error instanceof Error ? error.message : 'Verifique sua internet'}`);
     }
   };
 

@@ -49,38 +49,47 @@ async function startServer() {
 
   // Generate Ticket with Image
   app.post("/api/tickets/generate", async (req, res) => {
+    console.log("Generating ticket for:", req.body.name);
     try {
       const { name, whatsapp, type, qty, total, method } = req.body;
       const hash = uuidv4();
       const createdAt = new Date().toISOString();
 
       // 1. Save to Firestore
-      await ticketsCol.doc(hash).set({
-        hash,
-        name,
-        whatsapp: whatsapp || '',
-        type,
-        qty,
-        total,
-        method,
-        status: 'Ativa',
-        checkedIn: false,
-        createdAt: admin.firestore.Timestamp.now()
-      });
+      console.log("Saving to Firestore...");
+      try {
+        await ticketsCol.doc(hash).set({
+          hash,
+          name,
+          whatsapp: whatsapp || '',
+          type,
+          qty,
+          total,
+          method,
+          status: 'Ativa',
+          checkedIn: false,
+          createdAt: admin.firestore.Timestamp.now()
+        });
+        console.log("Firestore save successful");
+      } catch (fsErr) {
+        console.error("Firestore save ERROR:", fsErr);
+        throw new Error("Erro ao salvar no banco de dados");
+      }
 
       // 2. Generate Image with QR Code
       try {
+        console.log("Starting image generation...");
         // Base image URL from the app
         const baseImageUrl = "https://i.postimg.cc/bwNcM5kp/ARTE-SUNSET-STORY.jpg";
-        const canvas = createCanvas(800, 1200); // Proportions of a story/ticket
+        const canvas = createCanvas(800, 1200); 
         const ctx = canvas.getContext('2d');
 
-        // Load background
+        console.log("Loading background image...");
         const bg = await loadImage(baseImageUrl);
         ctx.drawImage(bg, 0, 0, 800, 1200);
 
-        // QR Code generation
-        const qrData = `${process.env.OFFICIAL_URL || 'http://localhost:3000'}/?ticket=${hash}`;
+        console.log("Generating QR Code...");
+        const qrData = `${process.env.VITE_OFFICIAL_URL || 'http://localhost:3000'}/?ticket=${hash}`;
         const qrBuffer = await QRCode.toBuffer(qrData, {
           margin: 1,
           color: {
@@ -90,17 +99,14 @@ async function startServer() {
         });
         const qrImage = await loadImage(qrBuffer);
 
-        // Draw QR box
         const qrSize = 250;
         const qrX = (800 - qrSize) / 2;
-        const qrY = 800; // Positioned at the bottom area
+        const qrY = 800; 
 
-        // Draw white bg for QR
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20);
         ctx.drawImage(qrImage, qrX, qrY, qrSize, qrSize);
 
-        // Add Customer Name
         ctx.fillStyle = '#FFFFFF';
         ctx.font = 'bold 30px Arial';
         ctx.textAlign = 'center';
@@ -108,7 +114,7 @@ async function startServer() {
         ctx.font = '20px Arial';
         ctx.fillText(`${type.toUpperCase()} - ${qty} UN`, 400, 780);
 
-        // Save image
+        console.log("Saving generated image to disk...");
         const fileName = `ticket_${hash}.png`;
         const filePath = path.join(ticketsDir, fileName);
         const out = fs.createWriteStream(filePath);
@@ -121,23 +127,23 @@ async function startServer() {
         });
 
         const imageUrl = `/generated_tickets/${fileName}`;
+        console.log("Image generated successfully:", imageUrl);
         
-        // Update firestore with imageUrl
         await ticketsCol.doc(hash).update({ imageUrl });
 
         res.json({ success: true, hash, imageUrl });
-        
-        // Notify via socket
         io.emit("sale_added", { id: hash, hash, name, type, qty, total, method, date: createdAt.split('T')[0], status: 'Ativa' });
 
       } catch (imgErr) {
-        console.error("Image generation error:", imgErr);
-        res.json({ success: true, hash, imageUrl: null }); // Fallback sans image
+        console.error("Image generation ERROR (falling back to no image):", imgErr);
+        // We still return success: true because the ticket was created in Firestore
+        res.json({ success: true, hash, imageUrl: null });
+        io.emit("sale_added", { id: hash, hash, name, type, qty, total, method, date: createdAt.split('T')[0], status: 'Ativa' });
       }
 
     } catch (error) {
-      console.error("Generate error:", error);
-      res.status(500).json({ error: "Failed to generate ticket" });
+      console.error("Critical Generate error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to generate ticket" });
     }
   });
 
