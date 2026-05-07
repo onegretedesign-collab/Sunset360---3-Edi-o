@@ -362,38 +362,28 @@ const App = () => {
     if (errors.name) setErrors({ ...errors, name: '' });
   };
 
-  const [generatedTicket, setGeneratedTicket] = useState<any>(null);
-
-  const confirmPayment = async (method: string) => {
+  const confirmPayment = (method: string) => {
     setPaymentMethod(method);
     const saleData = {
       name: userData.name,
       whatsapp: userData.whatsapp.replace(/\D/g, ''),
       type: ticketType,
       qty: ticketsCount,
+      cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
+      wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
       total: ticketsCount * currentPrice,
-      method: method === 'pix' ? 'PIX' : 'Retirada'
+      method: method === 'pix' ? 'PIX' : 'Retirada',
+      date: new Date().toISOString().split('T')[0],
+      status: 'Ativa'
     };
     
-    try {
-      const response = await fetch('/api/tickets/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(saleData)
-      });
-      
-      const result = await response.json();
-      if (result.success) {
-        setGeneratedTicket(result);
-        setCurrentSaleHash(result.hash);
-        setView('success');
-      } else {
-        alert(`Erro ao gerar convite: ${result.error || 'Erro desconhecido'}`);
-      }
-    } catch (error) {
-      console.error("Payment error:", error);
-      alert(`Erro de conexão com o servidor: ${error instanceof Error ? error.message : 'Verifique sua internet'}`);
+    if (socket) {
+      socket.emit('new_sale', saleData);
     }
+    
+    // Adicionar localmente para feedback imediato (será atualizado pelo socket)
+    setMyTickets([...myTickets, { ...saleData, id: Date.now() }]); 
+    setView('success');
   };
 
   const handleAdminLogin = (e: React.FormEvent) => {
@@ -412,30 +402,17 @@ const App = () => {
     setView('home');
   };
 
-  const confirmDelivery = async (sale: any) => {
-    if (!confirm(`Confirmar entrada de ${sale.name}?`)) return;
+  const confirmDelivery = (sale: any) => {
+    if (!confirm(`Confirmar entrega das pulseiras para ${sale.name}?`)) return;
 
-    try {
-      const response = await fetch('/api/tickets/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hash: sale.hash })
-      });
-      const result = await response.json();
+    if (socket) {
+      socket.emit('confirm_delivery', sale.id);
       
-      if (result.success) {
-        setScannedTicket(result.ticket);
-        
-        // Notificação via WhatsApp
-        const message = `*ENTRADA CONFIRMADA* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos sua entrada no *Sunset 360º 3ª Edição*! 🌅✨%0A%0AAproveite o evento!%0A%0A📍 *Local:* ${EVENT_LOCATION}%0A📅 *Data:* 19 de Setembro`;
-        
-        const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
-        window.open(waUrl, '_blank');
-      } else {
-        alert(result.error || "Erro ao validar entrada.");
-      }
-    } catch (err) {
-      alert("Erro de conexão ao validar.");
+      // Notificação via WhatsApp
+      const message = `*CONFIRMAÇÃO DE ENTREGA* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos que você acaba de retirar suas pulseiras para o *Sunset 360º 3ª Edição*! 🌅✨%0A%0ATudo pronto para o evento! Nos vemos lá!%0A%0A📍 *Local:* ${EVENT_LOCATION}%0A📅 *Data:* 19 de Setembro%0A%0A📸 *Siga-nos:* https://www.instagram.com/sunset360_3edicao`;
+      
+      const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
+      window.open(waUrl, '_blank');
     }
   };
   const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
@@ -533,30 +510,15 @@ const App = () => {
         /* verbose= */ false
       );
 
-      const onScanSuccess = async (decodedText: string) => {
+      const onScanSuccess = (decodedText: string) => {
+        // Handle the hash which might be a full URL or just the hash
         let hash = decodedText;
         if (decodedText.includes('ticket=')) {
           hash = new URL(decodedText).searchParams.get('ticket') || decodedText;
         }
         
-        try {
-          const response = await fetch('/api/tickets/validate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hash })
-          });
-          const result = await response.json();
-          if (result.success) {
-            setScannedTicket(result.ticket);
-            setScannedError('');
-          } else if (result.alreadyUsed) {
-            setScannedTicket(result.ticket);
-            setScannedError('Este convite já foi utilizado!');
-          } else {
-            setScannedError('Convite inválido ou não encontrado.');
-          }
-        } catch (err) {
-          setScannedError('Erro na conexão para validar.');
+        if (socket) {
+          socket.emit('validate_ticket', hash);
         }
         scanner.clear();
       };
@@ -939,32 +901,8 @@ const App = () => {
                   </div>
                 </div>
               </div>
-              {generatedTicket?.imageUrl && (
-                <div className="bg-neutral-900 border-2 border-orange-500 rounded-3xl p-4 space-y-4 shadow-2xl">
-                  <div className="flex items-center gap-2 mb-2">
-                    <QrCode className="text-orange-500" size={18} />
-                    <span className="text-[10px] font-black uppercase text-white tracking-widest italic">Seu Convite Digital</span>
-                  </div>
-                  <img 
-                    src={generatedTicket.imageUrl} 
-                    alt="Seu Convite" 
-                    className="w-full rounded-2xl shadow-lg border border-neutral-800"
-                  />
-                  <a 
-                    href={generatedTicket.imageUrl} 
-                    download={`ticket_sunset360_${generatedTicket.hash}.png`}
-                    className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-3 rounded-xl block text-sm uppercase tracking-widest shadow-lg shadow-orange-600/20 italic"
-                  >
-                    BAIXAR IMAGEM DO CONVITE
-                  </a>
-                </div>
-              )}
-
-              <button 
-                onClick={handleWhatsAppNotify} 
-                className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl shadow-lg shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic"
-              >
-                <MessageCircle size={20} /> ENVIAR NO WHATSAPP
+              <button onClick={handleWhatsAppNotify} className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl shadow-lg shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
+                <MessageCircle size={20} /> ENVIAR DADOS E COMPROVANTE
               </button>
               <button onClick={handleShare} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
                 <Share size={20} /> COMPARTILHAR RESERVA
@@ -1501,8 +1439,8 @@ const App = () => {
                    </div>
                 </div>
 
-                <div className={`p-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 ${viewedTicket.checkedIn ? 'bg-blue-600/20 text-blue-500 border border-blue-500/30' : 'bg-green-600/20 text-green-500 border border-green-500/30'}`}>
-                   {viewedTicket.checkedIn ? 'Convite já Utilizado (Check-in Realizado) ✅' : 'Convite Ativo • Aguardando Check-in'}
+                <div className={`p-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 ${viewedTicket.status === 'Entregue' ? 'bg-blue-600/20 text-blue-500 border border-blue-500/30' : 'bg-green-600/20 text-green-500 border border-green-500/30'}`}>
+                   {viewedTicket.status === 'Entregue' ? 'Convite já Autenticado ✅' : 'Convite Ativo • Aguardando Retirada'}
                 </div>
               </div>
 

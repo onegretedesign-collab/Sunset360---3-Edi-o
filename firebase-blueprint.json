@@ -1,28 +1,20 @@
 {
   "entities": {
-    "tickets": {
-      "title": "Tickets",
-      "description": "Event tickets and their check-in status",
+    "UserToken": {
+      "title": "UserToken",
+      "description": "Stores FCM tokens for users.",
       "type": "object",
       "properties": {
-        "hash": { "type": "string", "description": "Unique identifier for the ticket QR code" },
-        "name": { "type": "string", "description": "Customer name" },
-        "whatsapp": { "type": "string", "description": "Customer phone" },
-        "type": { "type": "string", "description": "Type of ticket (individual/casadinho)" },
-        "qty": { "type": "integer", "description": "Quantity of items" },
-        "status": { "type": "string", "enum": ["Ativa", "Entregue", "Cancelada"], "description": "Registration status" },
-        "checkedIn": { "type": "boolean", "description": "Whether the customer has entered the event" },
-        "checkedInAt": { "type": "string", "format": "date-time", "description": "Timestamp of check-in" },
-        "imageUrl": { "type": "string", "description": "Link to the personalized ticket image" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": { "type": "string", "description": "The user's ID." },
+        "token": { "type": "string", "description": "The FCM token." }
       },
-      "required": ["hash", "name", "type", "qty", "status", "createdAt"]
+      "required": ["userId", "token"]
     }
   },
   "firestore": {
-    "tickets": {
-      "schema": "tickets",
-      "description": "Collection of event tickets"
+    "/userTokens/{tokenId}": {
+      "schema": "UserToken",
+      "description": "Collection of FCM tokens."
     }
   }
 }

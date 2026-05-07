@@ -1,68 +1,19 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Helpers
-    function isSignedIn() {
+    // Helper functions
+    function isAuthenticated() {
       return request.auth != null;
     }
-
-    function isAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    // Tickets collection
-    match /tickets/{ticketId} {
-      function isValidTicket(data) {
-        return data.keys().hasAll(['hash', 'name', 'type', 'qty', 'status', 'createdAt']) &&
-               data.name is string && data.name.size() <= 100 &&
-               data.hash is string && data.hash.size() <= 64 &&
-               data.type in ['individual', 'casadinho'] &&
-               data.qty is int && data.qty > 0 &&
-               data.status in ['Ativa', 'Entregue', 'Cancelada'] &&
-               data.createdAt is timestamp;
-      }
-
-      // Allow public get for verification (QR code scanning)
-      // We restrict fields in the actual app, but rules allow reading the doc
-      allow get: if isValidId(ticketId);
-      
-      // Only admins can list all tickets
-      allow list: if isAdmin();
-
-      // Creation usually happens via server (Admin SDK)
-      // But we allow admins to create via client if needed
-      allow create: if isAdmin() && isValidTicket(incoming()) && incoming().hash == ticketId;
-
-      // Updates only by admin for status/check-in changes
-      allow update: if isAdmin() && isValidTicket(incoming()) && (
-        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
-        (incoming().diff(existing()).affectedKeys().hasOnly(['checkedIn', 'checkedInAt', 'updatedAt']))
-      );
-
-      // Only admins can delete
-      allow delete: if isAdmin();
-    }
-
-    // Admin profiles
-    match /admins/{adminId} {
-      allow read: if isSignedIn() && request.auth.uid == adminId;
+    match /userTokens/{tokenId} {
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+      allow read: if isAuthenticated() && isOwner(resource.data.userId);
+      allow update: if false; // Tokens shouldn't be updated, just replaced
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
     }
   }
 }
