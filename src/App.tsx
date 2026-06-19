@@ -27,17 +27,25 @@ import {
   ArrowUpDown,
   Filter,
   Maximize,
-  QrCode,
-  Scan
+  QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell,
+  CartesianGrid
+} from 'recharts';
 import { auth } from './firebase';
 
 const App = () => {
   // Estados principais
-  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, scanner, ticket_view
+  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, ticket_view
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
   const [userData, setUserData] = useState({ name: '', whatsapp: '' });
@@ -51,9 +59,6 @@ const App = () => {
   const [adminSearch, setAdminSearch] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
   const [statusFilter, setStatusFilter] = useState('Todos');
-  const [scanning, setScanning] = useState(false);
-  const [scannedTicket, setScannedTicket] = useState<any>(null);
-  const [scannedError, setScannedError] = useState('');
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
 
@@ -218,23 +223,10 @@ const App = () => {
 
     newSocket.on('sale_updated', (updatedData) => {
       setSalesReport(prev => prev.map(s => s.id === updatedData.id ? { ...s, ...updatedData } : s));
-      if (scannedTicket && scannedTicket.id === updatedData.id) {
-        setScannedTicket((prev: any) => ({ ...prev, ...updatedData }));
-      }
     });
 
     newSocket.on('sale_confirmed', (confirmedSale) => {
       setCurrentSaleHash(confirmedSale.hash);
-    });
-
-    newSocket.on('ticket_validated', (ticket) => {
-      setScannedTicket(ticket);
-      setScannedError('');
-    });
-
-    newSocket.on('ticket_invalid', () => {
-      setScannedError('Convite não encontrado ou inválido.');
-      setScannedTicket(null);
     });
 
     // Handle URL Ticket View
@@ -489,9 +481,6 @@ const App = () => {
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => setView('scanner')} className={`p-2 rounded-full transition-colors ${view === 'scanner' ? 'bg-orange-500 text-black' : 'text-orange-500 hover:bg-orange-500/10'}`}>
-          <Scan size={20} />
-        </button>
         <button onClick={handleInstall} className="p-2 text-orange-500 hover:bg-orange-500/10 rounded-full transition-colors">
           <Download size={20} />
         </button>
@@ -501,51 +490,6 @@ const App = () => {
       </div>
     </header>
   );
-
-  const QRScannerComponent = () => {
-    useEffect(() => {
-      const scanner = new Html5QrcodeScanner(
-        "reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        /* verbose= */ false
-      );
-
-      const onScanSuccess = (decodedText: string) => {
-        // Handle the hash which might be a full URL or just the hash
-        let hash = decodedText;
-        if (decodedText.includes('ticket=')) {
-          hash = new URL(decodedText).searchParams.get('ticket') || decodedText;
-        }
-        
-        if (socket) {
-          socket.emit('validate_ticket', hash);
-        }
-        scanner.clear();
-      };
-
-      scanner.render(onScanSuccess, () => {});
-
-      return () => {
-        scanner.clear().catch(e => console.log(e));
-      };
-    }, []);
-
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <button onClick={() => { setView('home'); setScannedTicket(null); setScannedError(''); }} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={20}/></button>
-          <h2 className="text-xl font-black italic uppercase tracking-tighter text-white leading-tight font-bold">Validar Convite</h2>
-        </div>
-        <div className="bg-neutral-900 p-2 rounded-3xl border border-neutral-800 overflow-hidden shadow-2xl relative">
-            <div id="reader" className="overflow-hidden rounded-2xl"></div>
-            <div className="absolute inset-0 pointer-events-none border-[40px] border-black/40 flex items-center justify-center">
-                 <div className="w-60 h-60 border-2 border-orange-500/50 rounded-2xl"></div>
-            </div>
-        </div>
-        <p className="text-[10px] text-neutral-500 font-bold uppercase tracking-widest text-center italic">Posicione o QR Code no visor para autenticar</p>
-      </div>
-    );
-  };
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-orange-500 selection:text-black">
@@ -624,7 +568,7 @@ const App = () => {
               <div className="px-1">
                 <div className="rounded-3xl overflow-hidden border border-neutral-800 bg-black shadow-2xl">
                   <img 
-                    src="https://i.postimg.cc/bwNcM5kp/ARTE-SUNSET-STORY.jpg" 
+                    src="https://i.postimg.cc/rw6RvrjJ/ARTE-SUNSET-STORY-SO-GPN.jpg" 
                     alt="Arte Sunset Story" 
                     className="w-full h-auto block"
                     referrerPolicy="no-referrer"
@@ -1086,6 +1030,76 @@ const App = () => {
                   </div>
                </div>
 
+               {/* GRÁFICO COMPARATIVO DE COMPRAS */}
+               <div className="bg-neutral-900 p-5 rounded-2xl border border-neutral-800 shadow-xl space-y-4">
+                 <div className="flex justify-between items-center">
+                   <div className="space-y-0.5">
+                     <p className="text-[10px] text-neutral-500 uppercase font-black tracking-widest italic leading-none">Gráfico Comparativo</p>
+                     <h4 className="text-xs font-black text-white italic uppercase tracking-tighter">Vendas por Tipo de Ingresso</h4>
+                   </div>
+                   <div className="flex gap-4 text-[9px] font-black uppercase italic">
+                     <div className="flex items-center gap-1.5">
+                       <span className="w-2.5 h-2.5 rounded-sm bg-orange-500 inline-block"></span>
+                       <span className="text-neutral-400">Vendas (Qtd)</span>
+                     </div>
+                   </div>
+                 </div>
+                 
+                 <div className="h-44 w-full">
+                   <ResponsiveContainer width="100%" height="100%">
+                     <BarChart 
+                       data={[
+                         { name: 'Individual', vendas: individualSalesCount },
+                         { name: 'Casadinho', vendas: casadinhoSalesCount }
+                       ]} 
+                       margin={{ top: 10, right: 10, left: -25, bottom: 5 }}
+                     >
+                       <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                       <XAxis 
+                         dataKey="name" 
+                         stroke="#737373" 
+                         fontSize={9} 
+                         tickLine={false} 
+                         axisLine={false}
+                         tickFormatter={(value) => value.toUpperCase()}
+                         style={{ fontWeight: '900', fontStyle: 'italic', letterSpacing: '0.05em' }}
+                       />
+                       <YAxis 
+                         stroke="#737373" 
+                         fontSize={9} 
+                         tickLine={false} 
+                         axisLine={false}
+                         allowDecimals={false}
+                         style={{ fontWeight: '900', fontStyle: 'italic' }}
+                       />
+                       <Tooltip 
+                         cursor={{ fill: 'rgba(249, 115, 22, 0.05)' }} 
+                         contentStyle={{ 
+                           backgroundColor: '#171717', 
+                           borderColor: '#262626', 
+                           borderRadius: '12px',
+                           fontFamily: 'sans-serif',
+                           fontSize: '10px',
+                           fontWeight: '950',
+                           fontStyle: 'italic'
+                         }}
+                         labelStyle={{ color: '#fff', textTransform: 'uppercase', marginBottom: '4px' }}
+                         itemStyle={{ color: '#f97316' }}
+                       />
+                       <Bar 
+                         dataKey="vendas" 
+                         fill="#f97316" 
+                         radius={[4, 4, 0, 0]}
+                         maxBarSize={48}
+                       >
+                         <Cell fill="#f97316" />
+                         <Cell fill="#f97316" opacity={0.85} />
+                       </Bar>
+                     </BarChart>
+                   </ResponsiveContainer>
+                 </div>
+               </div>
+
                {/* STATUS DA PROMOÇÃO NO ADMIN */}
                <div className={`p-4 rounded-2xl border-2 transition-all ${totalCupsGiven >= PROMO_LIMIT ? 'bg-red-500/10 border-red-500' : 'bg-orange-500/10 border-orange-500/30'}`}>
                   <div className="flex justify-between items-start mb-3">
@@ -1303,89 +1317,7 @@ const App = () => {
               </div>
             </motion.div>
           )}
-          {/* SCANNER VIEW */}
-          {view === 'scanner' && (
-            <motion.div 
-              key="scanner"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="space-y-6"
-            >
-              {!scannedTicket && !scannedError && <QRScannerComponent />}
 
-              {scannedError && (
-                <div className="bg-red-500/10 border-2 border-red-500 rounded-3xl p-8 text-center space-y-4">
-                  <div className="bg-red-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-red-500/30">
-                    <AlertCircle size={32} className="text-white" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-black text-white italic uppercase tracking-tighter">ERRO NA VALIDAÇÃO</h3>
-                    <p className="text-neutral-400 text-sm font-bold uppercase italic">{scannedError}</p>
-                  </div>
-                  <button onClick={() => { setScannedError(''); setScannedTicket(null); }} className="w-full bg-neutral-800 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs italic">TENTAR NOVAMENTE</button>
-                </div>
-              )}
-
-              {scannedTicket && (
-                <div className="bg-neutral-900 border-2 border-orange-500 rounded-3xl overflow-hidden shadow-2xl relative">
-                  <div className="bg-orange-600 p-6 text-center space-y-2 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10"><QrCode size={64} className="text-white" /></div>
-                    <div className="bg-white/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-2 backdrop-blur-sm">
-                      <CheckCircle2 size={24} className="text-white" />
-                    </div>
-                    <h3 className="text-2xl font-black italic uppercase italic tracking-tighter text-white font-black leading-tight">CONVITE IDENTIFICADO</h3>
-                    <span className="bg-white px-3 py-1 rounded-full text-orange-600 font-black text-[10px] uppercase tracking-widest italic">{scannedTicket.status}</span>
-                  </div>
-                  
-                  <div className="p-6 space-y-6">
-                    <div className="space-y-4 font-black uppercase italic tracking-tighter">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] text-neutral-500 mb-1">Comprador</span>
-                        <span className="text-xl text-white underline decoration-orange-500/50 decoration-2 underline-offset-4">{scannedTicket.name}</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-neutral-500 mb-1">Tipo</span>
-                          <span className="text-orange-500">{TICKET_LABELS[scannedTicket.type as keyof typeof TICKET_LABELS]}</span>
-                        </div>
-                        <div className="flex flex-col items-end">
-                          <span className="text-[10px] text-neutral-500 mb-1">Quantidade</span>
-                          <span className="text-white">{scannedTicket.qty} Pacote(s)</span>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-neutral-800">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-neutral-500 mb-1">Copos Brinde</span>
-                          <span className="text-white">{scannedTicket.qty * (scannedTicket.type === 'individual' ? 1 : 2)} UNIDADES</span>
-                        </div>
-                        <div className="flex flex-col items-end">
-                          <span className="text-[10px] text-neutral-500 mb-1">Pulseiras</span>
-                          <span className="text-white font-black text-lg">{scannedTicket.qty * (scannedTicket.type === 'individual' ? 1 : 2)} UN</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      {scannedTicket.status !== 'Entregue' ? (
-                        <button 
-                          onClick={() => confirmDelivery(scannedTicket)} 
-                          className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-5 rounded-2xl shadow-xl shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic"
-                        >
-                          <CheckCircle2 size={24} /> CONFIRMAR ENTREGA
-                        </button>
-                      ) : (
-                        <div className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-500 font-black py-5 rounded-2xl text-sm flex items-center justify-center gap-2 uppercase italic">
-                           ENTREGA JÁ REALIZADA ✅
-                        </div>
-                      )}
-                      <button onClick={() => { setScannedTicket(null); setScannedError(''); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs italic transition-all">SCANEAR OUTRO</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          )}
 
           {/* TICKET VIEW (PUBLICO) */}
           {view === 'ticket_view' && viewedTicket && (
@@ -1463,9 +1395,6 @@ const App = () => {
       <nav className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md border-t border-neutral-800 p-4 flex justify-around items-center max-w-md mx-auto z-40 italic shadow-2xl shadow-black font-bold">
         <button onClick={() => { window.history.pushState({}, '', '/'); setView('home'); }} className={`flex flex-col items-center gap-1 transition-all ${view === 'home' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
           <Ticket size={22} /><span className="text-[9px] font-black uppercase tracking-tighter italic leading-none">Início</span>
-        </button>
-        <button onClick={() => setView('scanner')} className={`flex flex-col items-center gap-1 transition-all ${view === 'scanner' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
-          <Scan size={22} /><span className="text-[9px] font-black uppercase tracking-tighter italic leading-none">Scanner</span>
         </button>
         <button onClick={() => setView('my_tickets')} className={`flex flex-col items-center gap-1 transition-all ${view === 'my_tickets' ? 'text-orange-500 scale-110 active:scale-100 font-black' : 'text-neutral-600 hover:text-neutral-400 font-black italic'}`}>
           <div className="relative font-bold"><ClipboardList size={22} /><span className="absolute -top-1 -right-1 bg-green-500 w-2 h-2 rounded-full animate-pulse border border-black shadow-[0_0_10px_rgba(34,197,94,0.5)]"></span></div>
