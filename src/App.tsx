@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { 
   Ticket, 
@@ -27,7 +27,12 @@ import {
   ArrowUpDown,
   Filter,
   Maximize,
-  QrCode
+  QrCode,
+  Bell,
+  Volume2,
+  VolumeX,
+  Sparkles,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -61,6 +66,87 @@ const App = () => {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
+
+  // Notificações em tempo real para o admin
+  const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
+  const [enableNotificationSound, setEnableNotificationSound] = useState(true);
+
+  const viewRef = useRef(view);
+  const isAdminAuthenticatedRef = useRef(isAdminAuthenticated);
+  const enableSoundRef = useRef(enableNotificationSound);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    isAdminAuthenticatedRef.current = isAdminAuthenticated;
+  }, [isAdminAuthenticated]);
+
+  useEffect(() => {
+    enableSoundRef.current = enableNotificationSound;
+  }, [enableNotificationSound]);
+
+  // Função para limpar uma notificação visual
+  const dismissNotification = (id: string) => {
+    setAdminNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
+  // Temporizador automático para limpar notificações em 7 segundos
+  useEffect(() => {
+    if (adminNotifications.length > 0) {
+      const latest = adminNotifications[adminNotifications.length - 1];
+      const timer = setTimeout(() => {
+        setAdminNotifications(prev => prev.filter(n => n.notifId !== latest.notifId));
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [adminNotifications]);
+
+  // Toca um efeito sonoro senoidal agradável em tempo real
+  const playNotificationSound = () => {
+    if (!enableSoundRef.current) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      // Tom 1: Nota confortável e curta (D5)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, ctx.currentTime); 
+      gain1.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+      osc1.start(ctx.currentTime);
+      osc1.stop(ctx.currentTime + 0.35);
+
+      // Tom 2: Harmônico superior agradável (A5)
+      setTimeout(() => {
+        try {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(880.00, ctx.currentTime); 
+          gain2.gain.setValueAtTime(0.18, ctx.currentTime);
+          gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+          osc2.start(ctx.currentTime);
+          osc2.stop(ctx.currentTime + 0.5);
+        } catch (e) {
+          console.error("Erro secundário no áudio:", e);
+        }
+      }, 95);
+    } catch (err) {
+      console.error("Erro ao reproduzir som de notificação:", err);
+    }
+  };
 
   // Configurações do Organizador
   const ORGANIZER_WA = "5564984530700"; 
@@ -149,6 +235,31 @@ const App = () => {
     );
   };
 
+  // Simula uma nova venda para teste sonoro e visual no painel administrativo
+  const triggerTestNotification = () => {
+    const testNames = ['Eduardo Negrete', 'Mariana Alencar', 'Arthur Antunes', 'Nathalia Rodrigues', 'Rogério Negrete'];
+    const randomName = testNames[Math.floor(Math.random() * testNames.length)];
+    const randomType = Math.random() > 0.5 ? 'individual' : 'casadinho';
+    const randomQty = Math.floor(Math.random() * 2) + 1;
+    
+    const mockSale = {
+      id: Date.now(),
+      name: randomName + " (Simulação)",
+      type: randomType,
+      qty: randomQty,
+      paymentMethod: 'pix',
+      date: new Date().toISOString()
+    };
+    
+    const notifId = Date.now().toString() + '-' + Math.floor(Math.random() * 1000);
+    setAdminNotifications(prev => {
+      if (prev.some(item => item.id === mockSale.id)) return prev;
+      return [...prev, { notifId, ...mockSale }];
+    });
+    
+    playNotificationSound();
+  };
+
   // URL da Imagem do Banner (Logo Oficial)
   const LOGO_URL = "https://i.postimg.cc/zff0nPVL/LOGO-EVENTO-SUNSET-360-3-EDICAO-01.png"; 
 
@@ -210,6 +321,18 @@ const App = () => {
     });
 
     newSocket.on('sale_added', (newSale) => {
+      // Se o painel admin estiver ativo e logado, ativa sons e toasts visuais em tempo real
+      if (isAdminAuthenticatedRef.current && viewRef.current === 'admin') {
+        const notifId = Date.now().toString() + '-' + Math.floor(Math.random() * 1000);
+        setAdminNotifications(prevNotifs => {
+          if (prevNotifs.some(item => item.id === newSale.id)) return prevNotifs;
+          return [...prevNotifs, { notifId, ...newSale }];
+        });
+        
+        // Toca o sino de vendas
+        playNotificationSound();
+      }
+
       setSalesReport(prev => {
         // Evitar duplicatas
         if (prev.find(s => s.id === newSale.id)) return prev;
@@ -285,8 +408,47 @@ const App = () => {
     const total = ticketsCount * currentPrice;
     const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
     const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
-    const ticketLink = `${OFFICIAL_URL}?ticket=${currentSaleHash}`;
-    const message = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨%0A%0A📅 *Data:* 19 de Setembro às 18 horas%0A%0A*DADOS DA COMPRA:*%0A👤 *Comprador:* ${userData.name}%0A🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}%0A🔢 *Quantidade:* ${ticketsCount}%0A🥤 *Copos:* ${cups}%0A🎗️ *Pulseiras:* ${wristbands}%0A💰 *Valor Total:* R$ ${total},00%0A💳 *Método:* ${paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega'}%0A%0A*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*%0A📍 Delivery Bebidas Geladas%0A📍 Açai Tele Entregas (Vendedor: Alex ou Esposa)%0A📍 Rogério Negrete%0A%0A⚠️ *Importante:* Apresente este comprovante nos pontos de venda para retirar suas pulseiras.%0A%0A🎫 *SEU CONVITE DIGITAL (QR CODE):*%0A${ticketLink}%0A%0A🌐 *Garanta o seu também em:*%0A${OFFICIAL_URL}%0A%0A📸 *Siga nosso Instagram e compartilhe:*%0Ahttps://www.instagram.com/sunset360_3edicao?utm_source=qr&igsh=czZneG01cHlrZTI3%0A%0A*ESTOU ENVIANDO O COMPROVANTE ABAIXO:* 👇`;
+    
+    const formattedDate = new Date().toLocaleString('pt-BR', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit'
+    }).replace(',', ' às');
+
+    const paymentMethodText = paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega';
+
+    const messageText = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨
+
+📅 *Data:* 19 de Setembro às 18 horas
+
+*DADOS DA COMPRA:*
+👤 *Comprador:* ${userData.name}
+📅 *Data/Hora da compra:* ${formattedDate}
+🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}
+🔢 *Quantidade:* ${ticketsCount}
+🥤 *Copos:* ${cups}
+🎗️ *Pulseiras:* ${wristbands}
+💰 *Valor Total:* R$ ${total},00
+💳 *Método:* ${paymentMethodText}
+
+*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*
+📍 Delivery Bebidas Geladas
+📍 Nathalia
+📍 Rogério Negrete
+
+⚠️ *Importante:* Apresente esta mensagem nos pontos de venda para retirar suas pulseiras.
+
+🎫 *RETIRE SUA PULSEIRA(ª), APRESENTANDO A MENSAGEM DE COMPRA COM SEU NOME E SEUS DADOS.*
+
+🌐 *Garanta o seu também em:*
+${OFFICIAL_URL}
+
+📸 *Siga nosso Instagram e compartilhe:*
+https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
+
+    const message = encodeURIComponent(messageText);
     
     const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
     window.open(waUrl, '_blank');
@@ -493,6 +655,55 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-orange-500 selection:text-black">
+      {/* CENTRAL DE NOTIFICAÇÕES REAL-TIME (TOASTS) */}
+      <div className="fixed top-4 right-4 z-[9999] pointer-events-none flex flex-col gap-3 max-w-[340px] w-full">
+        <AnimatePresence>
+          {adminNotifications.map((noti) => (
+            <motion.div
+              key={noti.notifId}
+              initial={{ opacity: 0, x: 50, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 50, scale: 0.9 }}
+              transition={{ type: "spring", stiffness: 350, damping: 25 }}
+              className="pointer-events-auto bg-neutral-900 border border-orange-500 rounded-2xl p-4 shadow-2xl flex gap-3 relative overflow-hidden backdrop-blur-md"
+            >
+              <div className="absolute top-0 right-0 p-2 opacity-[0.03] pointer-events-none">
+                <Sparkles size={60} className="text-orange-500" />
+              </div>
+              <div className="w-1.5 bg-orange-500 absolute top-0 left-0 bottom-0"></div>
+              <div className="flex-1 space-y-2 ml-1 text-left">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-0.5">
+                    <span className="inline-flex items-center gap-1 bg-orange-500/15 px-2 py-0.5 rounded-full text-[8px] text-orange-400 font-black uppercase tracking-wider italic">
+                      <Sparkles size={9} className="animate-pulse" /> NOVA VENDA REALIZADA
+                    </span>
+                    <p className="text-xs font-black text-white italic uppercase truncate w-[220px]">{noti.name}</p>
+                  </div>
+                  <button 
+                    onClick={() => dismissNotification(noti.notifId)}
+                    className="p-1 hover:bg-neutral-800 rounded-lg text-neutral-500 hover:text-white transition-colors"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[9px] text-neutral-400 font-bold border-t border-neutral-800/80 pt-2 italic">
+                  <div>
+                    <span className="text-[7.5px] text-neutral-500 block uppercase font-black tracking-widest mb-0.5">Tipo de Convite</span>
+                    <span className="text-white font-black uppercase leading-tight font-black">{TICKET_LABELS[noti.type as keyof typeof TICKET_LABELS] || noti.type}</span>
+                  </div>
+                  <div>
+                    <span className="text-[7.5px] text-neutral-500 block uppercase font-black tracking-widest mb-0.5">Qtd / Brindes</span>
+                    <span className="text-orange-400 font-black leading-tight font-black">
+                      {noti.qty}x ({(noti.type === 'individual' ? 1 : 2) * noti.qty} Copos / Pulseiras)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
       <Header />
 
       <main className="max-w-md mx-auto px-4 py-6 pb-24">
@@ -820,7 +1031,7 @@ const App = () => {
                     <p className="text-[10px] text-white font-black uppercase italic tracking-tighter">Pontos de Venda e Retirada:</p>
                     <div className="space-y-1">
                       <p className="text-[10px] text-neutral-400 font-bold">📍 Delivery Bebidas Geladas</p>
-                      <p className="text-[10px] text-neutral-400 font-bold">📍 Açai Tele Entregas (Vendedor: Alex ou Esposa)</p>
+                      <p className="text-[10px] text-neutral-400 font-bold">📍 Nathalia</p>
                       <p className="text-[10px] text-neutral-400 font-bold">📍 Rogério Negrete</p>
                     </div>
                   </div>
@@ -1011,6 +1222,46 @@ const App = () => {
                         <button onClick={() => setView('home')} className="text-[10px] uppercase font-black text-neutral-600 bg-neutral-900 px-3 py-1 rounded-full hover:text-white transition-all italic shadow-inner font-bold">Fechar</button>
                        </div>
                     </div>
+                    {/* MONITOR DE VENDAS & CONTROLES REAL-TIME */}
+                    <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800/80 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3 relative overflow-hidden backdrop-blur-md text-left mb-4">
+                      <div className="absolute top-0 right-0 p-3 opacity-5 pointer-events-none">
+                        <Bell size={44} className="text-orange-500" />
+                      </div>
+                      <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <div className="w-9 h-9 bg-orange-500/10 rounded-full flex items-center justify-center text-orange-500 shrink-0 shadow-inner">
+                          <span className="relative flex h-3 w-3 flex-none">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-orange-500"></span>
+                          </span>
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] text-neutral-500 uppercase font-black tracking-widest italic leading-none">Monitoramento Ativo</p>
+                          <h4 className="text-xs font-black text-white italic uppercase tracking-tighter leading-none">Vendas em Tempo Real</h4>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
+                        <button 
+                          onClick={() => setEnableNotificationSound(!enableNotificationSound)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-black text-[9px] uppercase italic transition-all active:scale-95 ${
+                            enableNotificationSound 
+                              ? 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20' 
+                              : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                          }`}
+                        >
+                          {enableNotificationSound ? <Volume2 size={11} /> : <VolumeX size={11} />}
+                          <span>Som ({enableNotificationSound ? 'Ativo' : 'Mudo'})</span>
+                        </button>
+                        
+                        <button 
+                          onClick={triggerTestNotification}
+                          className="bg-orange-600 hover:bg-orange-700 text-white font-black text-[9px] uppercase italic px-3 py-1.5 rounded-xl shadow-lg shadow-orange-600/10 transition-all active:scale-95 flex items-center gap-1.5 text-nowrap"
+                        >
+                          <Sparkles size={11} className="animate-pulse" />
+                          <span>Simular Venda</span>
+                        </button>
+                      </div>
+                    </div>
+
                 <div className="grid grid-cols-2 gap-3 leading-tight">
                   <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 shadow-lg">
                     <p className="text-neutral-500 text-[10px] uppercase font-black tracking-widest mb-1 italic">Vendas Totais</p>
