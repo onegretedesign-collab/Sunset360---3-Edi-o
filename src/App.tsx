@@ -53,8 +53,8 @@ const App = () => {
   const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, ticket_view
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
-  const [userData, setUserData] = useState({ name: '', whatsapp: '' });
-  const [errors, setErrors] = useState({ name: '', whatsapp: '' });
+  const [userData, setUserData] = useState({ name: '', whatsapp: '', cpf: '' });
+  const [errors, setErrors] = useState({ name: '', whatsapp: '', cpf: '' });
   const [paymentMethod, setPaymentMethod] = useState('');
   const [copied, setCopied] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -237,7 +237,7 @@ const App = () => {
 
   // Simula uma nova venda para teste sonoro e visual no painel administrativo
   const triggerTestNotification = () => {
-    const testNames = ['Eduardo Negrete', 'Mariana Alencar', 'Arthur Antunes', 'Nathalia Rodrigues', 'Rogério Negrete'];
+    const testNames = ['Eduardo Negrete', 'Mariana Alencar', 'Arthur Antunes', 'Nathália Nolêto', 'Rogério Negrete'];
     const randomName = testNames[Math.floor(Math.random() * testNames.length)];
     const randomType = Math.random() > 0.5 ? 'individual' : 'casadinho';
     const randomQty = Math.floor(Math.random() * 2) + 1;
@@ -305,7 +305,22 @@ const App = () => {
   };
 
   // Convites comprados nesta sessão
-  const [myTickets, setMyTickets] = useState<any[]>([]);
+  const [myTickets, setMyTickets] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('sunset_360_my_tickets');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sunset_360_my_tickets', JSON.stringify(myTickets));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [myTickets]);
 
   // Inicializar Socket.io
   useEffect(() => {
@@ -435,10 +450,10 @@ const App = () => {
 
 *PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*
 📍 Delivery Bebidas Geladas
-📍 Nathalia
+📍 Nathália Nolêto
 📍 Rogério Negrete
 
-⚠️ *Importante:* Apresente esta mensagem nos pontos de venda para retirar suas pulseiras.
+⚠️ *Atenção:* A retirada de pulseiras nos pontos de vendas deve ser realizada até dia 10 de Setembro.
 
 🎫 *RETIRE SUA PULSEIRA(ª), APRESENTANDO A MENSAGEM DE COMPRA COM SEU NOME E SEUS DADOS.*
 
@@ -470,12 +485,81 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
   const startPurchase = (type: string) => {
     setTicketType(type);
     setTicketsCount(1);
-    setErrors({ name: '', whatsapp: '' });
+    setUserData({ name: '', whatsapp: '', cpf: '' });
+    setErrors({ name: '', whatsapp: '', cpf: '' });
     setView('buy');
   };
 
+  const validateCPF = (cpf: string): boolean => {
+    const cleanCPF = cpf.replace(/\D/g, '');
+    if (cleanCPF.length !== 11) return false;
+    if (/^(\d)\1{10}$/.test(cleanCPF)) return false;
+
+    let sum = 0;
+    let remainder;
+
+    for (let i = 1; i <= 9; i++) {
+      sum += parseInt(cleanCPF.substring(i - 1, i)) * (11 - i);
+    }
+    remainder = (sum * 10) % 11;
+    if (remainder === 10 || remainder === 11) remainder = 0;
+    if (remainder !== parseInt(cleanCPF.substring(9, 10))) return false;
+
+    sum = 0;
+    for (let i = 1; i <= 10; i++) {
+      sum += parseInt(cleanCPF.substring(i - 1, i)) * (12 - i);
+    }
+    remainder = (sum * 10) % 11;
+    if (remainder === 10 || remainder === 11) remainder = 0;
+    if (remainder !== parseInt(cleanCPF.substring(10, 11))) return false;
+
+    return true;
+  };
+
+  const formatCPF = (value: string) => {
+    const digits = value.replace(/\D/g, '').slice(0, 11);
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+    if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+  };
+
+  const getDeadlineStatus = () => {
+    const now = new Date();
+    const deadline = new Date(2026, 8, 10); // 10 de Setembro de 2026
+    
+    const todayZero = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const deadlineZero = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+    
+    const diffTime = deadlineZero.getTime() - todayZero.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) {
+      return { 
+        status: 'expired', 
+        label: 'Prazo de Retirada Encerrado (10/09)', 
+        colorClass: 'text-red-500 bg-red-500/15 border border-red-500/30 px-2 py-1 rounded-lg text-[9px] uppercase font-black italic tracking-tighter flex items-center gap-1 w-fit', 
+        iconClass: 'text-red-500 animate-pulse shrink-0' 
+      };
+    } else if (diffDays <= 2) {
+      return { 
+        status: 'urgent', 
+        label: `Retirada Urgente (${diffDays === 0 ? 'Hoje!' : diffDays === 1 ? 'Amanhã!' : 'Em 2 dias!'})`, 
+        colorClass: 'text-rose-500 bg-rose-500/15 border border-rose-500/30 px-2 py-1 rounded-lg text-[9px] uppercase font-black italic tracking-tighter flex items-center gap-1.5 w-fit animate-pulse', 
+        iconClass: 'text-rose-500 animate-bounce shrink-0' 
+      };
+    } else {
+      return { 
+        status: 'normal', 
+        label: 'Retirada até 10 de Setembro', 
+        colorClass: 'text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-lg text-[9px] uppercase font-black italic tracking-tighter flex items-center gap-1 w-fit', 
+        iconClass: 'text-amber-500 shrink-0' 
+      };
+    }
+  };
+
   const handlePurchase = () => {
-    const newErrors = { name: '', whatsapp: '' };
+    const newErrors = { name: '', whatsapp: '', cpf: '' };
     let isValid = true;
 
     // Validação do Nome
@@ -488,6 +572,15 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     const whatsappDigits = userData.whatsapp.replace(/\D/g, '');
     if (whatsappDigits.length < 10 || whatsappDigits.length > 11) {
       newErrors.whatsapp = 'Informe um WhatsApp válido com DDD (ex: 64999999999).';
+      isValid = false;
+    }
+
+    // Validação do CPF
+    if (!userData.cpf) {
+      newErrors.cpf = 'O CPF é obrigatório.';
+      isValid = false;
+    } else if (!validateCPF(userData.cpf)) {
+      newErrors.cpf = 'Informe um CPF válido e bem formatado.';
       isValid = false;
     }
 
@@ -516,11 +609,22 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     if (errors.name) setErrors({ ...errors, name: '' });
   };
 
+  const handleCPFChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCPF(e.target.value);
+    setUserData({ ...userData, cpf: formatted });
+    if (errors.cpf) setErrors({ ...errors, cpf: '' });
+  };
+
   const confirmPayment = (method: string) => {
     setPaymentMethod(method);
+    const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    setCurrentSaleHash(generatedHash);
+    
     const saleData = {
+      hash: generatedHash,
       name: userData.name,
       whatsapp: userData.whatsapp.replace(/\D/g, ''),
+      cpf: userData.cpf.replace(/\D/g, ''),
       type: ticketType,
       qty: ticketsCount,
       cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
@@ -609,11 +713,12 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       return;
     }
 
-    const headers = ['Data', 'Nome', 'WhatsApp', 'Tipo', 'Total (R$)', 'Status'];
+    const headers = ['Data', 'Nome', 'WhatsApp', 'CPF', 'Tipo', 'Total (R$)', 'Status'];
     const csvRows = salesReport.map(sale => [
       sale.date,
       `"${sale.name}"`,
       sale.whatsapp,
+      sale.cpf || '',
       `"${sale.type}"`,
       sale.total,
       `"${sale.status}"`
@@ -936,6 +1041,15 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                         />
                         {errors.whatsapp && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.whatsapp}</p>}
                       </div>
+                      <div>
+                        <input 
+                          type="tel" value={userData.cpf}
+                          onChange={handleCPFChange}
+                          className={`w-full bg-neutral-950 border ${errors.cpf ? 'border-red-500' : 'border-neutral-800'} rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic`}
+                          placeholder="CPF (Ex: 000.000.000-00)"
+                        />
+                        {errors.cpf && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.cpf}</p>}
+                      </div>
                   </div>
                 </div>
                 <div className="bg-neutral-900 p-4 rounded-xl border border-neutral-800 flex items-center justify-between">
@@ -1028,17 +1142,17 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                   </div>
                   
                   <div className="pt-3 border-t border-orange-500/20 space-y-2">
-                    <p className="text-[10px] text-white font-black uppercase italic tracking-tighter">Pontos de Venda e Retirada:</p>
+                    <p className="text-[10px] text-white font-black uppercase italic tracking-tighter">Pontos de Venda e Retirada (Até dia 10/09):</p>
                     <div className="space-y-1">
                       <p className="text-[10px] text-neutral-400 font-bold">📍 Delivery Bebidas Geladas</p>
-                      <p className="text-[10px] text-neutral-400 font-bold">📍 Nathalia</p>
+                      <p className="text-[10px] text-neutral-400 font-bold">📍 Nathália Nolêto</p>
                       <p className="text-[10px] text-neutral-400 font-bold">📍 Rogério Negrete</p>
                     </div>
                   </div>
 
                   <div className="bg-black/40 p-2 rounded-xl border border-orange-500/20 flex items-center gap-2">
                      <span className="text-[10px] font-black text-orange-500 italic">⚠️ IMPORTANTE:</span>
-                     <span className="text-[9px] text-neutral-400 font-bold leading-tight">Apresente este comprovante para retirar suas pulseiras.</span>
+                     <span className="text-[9px] text-neutral-400 font-bold leading-tight">Retire suas pulseiras nos pontos de vendas até dia 10 de Setembro.</span>
                   </div>
               </div>
               <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800 text-left relative overflow-hidden shadow-2xl">
@@ -1139,10 +1253,27 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                                 <div>
                                   <h3 className="text-xl font-black text-white italic uppercase leading-tight pr-20">{TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS]}</h3>
                                   <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest italic leading-none">Sunset 360º 3ª Edição</p>
+                                  
+                                  {/* Alerta de Retirada com cor e animações dinâmicas */}
+                                  {(() => {
+                                    const deadlineInfo = getDeadlineStatus();
+                                    return (
+                                      <div className={`${deadlineInfo.colorClass} mt-2.5 flex items-center gap-1.5`}>
+                                        <AlertCircle size={11} className={deadlineInfo.iconClass} />
+                                        <span>{deadlineInfo.label}</span>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                                 
                                 <div className="grid grid-cols-2 gap-4 border-t border-neutral-800 pt-4 italic">
-                                    <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Titular</span><span className="text-xs text-white font-black uppercase truncate block leading-none">{ticket.name}</span></div>
+                                    <div>
+                                      <span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Titular</span>
+                                      <span className="text-xs text-white font-black uppercase truncate block leading-none">{ticket.name}</span>
+                                      {ticket.cpf && (
+                                        <span className="text-[7.5px] text-neutral-400 font-mono block mt-1 tracking-tight">CPF: {formatCPF(ticket.cpf)}</span>
+                                      )}
+                                    </div>
                                     <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Bilhetes</span><span className="text-xs text-white font-black leading-none">{ticket.qty} Unidade(s)</span></div>
                                 </div>
                             </div>
@@ -1539,7 +1670,10 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                         {getSortedSales(salesReport).map((sale) => (
                           <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
                             <td className="p-4 text-neutral-400 whitespace-nowrap">{sale.date}</td>
-                            <td className="p-4 font-black text-white italic truncate max-w-[100px] leading-none">{sale.name}</td>
+                            <td className="p-4 font-black text-white italic truncate max-w-[100px] leading-none">
+                              <div>{sale.name}</div>
+                              {sale.cpf && <div className="text-[7.5px] text-neutral-500 font-mono mt-1 font-normal tracking-normal">{formatCPF(sale.cpf)}</div>}
+                            </td>
                             <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
                             <td className="p-4 text-right text-white font-black">R${sale.total}</td>
                             <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
@@ -1608,7 +1742,10 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                 <div className="space-y-4 text-left font-black uppercase italic tracking-tighter">
                    <div className="flex flex-col p-4 bg-black/40 rounded-2xl border border-neutral-800">
                       <span className="text-[9px] text-neutral-500 mb-1">Titular</span>
-                      <span className="text-lg text-white truncate">{viewedTicket.name}</span>
+                      <span className="text-lg text-white truncate mb-1">{viewedTicket.name}</span>
+                      {viewedTicket.cpf && (
+                        <span className="text-[10px] text-neutral-400 font-mono">CPF: {formatCPF(viewedTicket.cpf)}</span>
+                      )}
                    </div>
                    <div className="grid grid-cols-2 gap-3">
                       <div className="p-4 bg-black/40 rounded-2xl border border-neutral-800">

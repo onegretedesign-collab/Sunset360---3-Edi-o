@@ -18,6 +18,7 @@ db.exec(`
     hash TEXT UNIQUE,
     name TEXT NOT NULL,
     whatsapp TEXT NOT NULL DEFAULT '',
+    cpf TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL,
     qty INTEGER NOT NULL,
     total INTEGER NOT NULL,
@@ -38,6 +39,19 @@ try {
   }
 } catch (e) {
   console.error("Error checking/adding hash column:", e);
+}
+
+// Add cpf column if it doesn't exist (for existing databases)
+try {
+  const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
+  const hasCpfColumn = tableInfo.some(col => col.name === 'cpf');
+  
+  if (!hasCpfColumn) {
+    console.log("Adding 'cpf' column to sales table...");
+    db.prepare("ALTER TABLE sales ADD COLUMN cpf TEXT NOT NULL DEFAULT ''").run();
+  }
+} catch (e) {
+  console.error("Error checking/adding cpf column:", e);
 }
 
 // Helper to generate a random hash
@@ -90,12 +104,12 @@ async function startServer() {
     socket.emit("promo_status", promoStatus);
 
     socket.on("new_sale", (saleData) => {
-      const { name, whatsapp, type, qty, total, method, date, status } = saleData;
-      const hash = generateHash();
+      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status } = saleData;
+      const hash = clientHash || generateHash();
       const info = db.prepare(`
-        INSERT INTO sales (hash, name, whatsapp, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, name, whatsapp || '', type, qty, total, method, date, status);
+        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status);
       
       const newSale = { id: info.lastInsertRowid, hash, ...saleData };
       io.emit("sale_added", newSale);
