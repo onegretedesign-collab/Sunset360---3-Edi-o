@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Trash2,
   AlertCircle,
+  AlertTriangle,
   Map as MapIcon,
   Navigation,
   Clock,
@@ -66,6 +67,48 @@ const App = () => {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
+
+  const [customToast, setCustomToast] = useState<{
+    show: boolean;
+    message: string;
+    type: 'success' | 'error' | 'info';
+  }>({ show: false, message: '', type: 'success' });
+
+  const [customConfirm, setCustomConfirm] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmLabel?: string;
+    type?: 'danger' | 'info';
+  }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
+  const triggerToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setCustomToast({ show: true, message, type });
+  };
+
+  const triggerConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'info' = 'info', confirmLabel = 'Confirmar') => {
+    setCustomConfirm({
+      show: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setCustomConfirm(prev => ({ ...prev, show: false }));
+      },
+      confirmLabel,
+      type
+    });
+  };
+
+  useEffect(() => {
+    if (customToast.show) {
+      const timer = setTimeout(() => {
+        setCustomToast(prev => ({ ...prev, show: false }));
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [customToast.show]);
 
   // Notificações em tempo real para o admin
   const [adminNotifications, setAdminNotifications] = useState<any[]>([]);
@@ -300,7 +343,7 @@ const App = () => {
         setDeferredPrompt(null);
       });
     } else {
-        alert("Para instalar, toque no menu do seu navegador e escolha 'Adicionar à tela de início'.");
+        triggerToast("Para instalar, toque no menu do seu navegador e escolha 'Adicionar à tela de início'.", "info");
     }
   };
 
@@ -322,9 +365,7 @@ const App = () => {
     }
   }, [myTickets]);
 
-  // Inicializar Socket.io e carregar vendas iniciais
-  useEffect(() => {
-    // Carregar vendas iniciais via REST API (Garante carregamento imediato)
+  const fetchSalesReport = () => {
     fetch('/api/sales')
       .then(res => res.json())
       .then(data => {
@@ -332,7 +373,20 @@ const App = () => {
           setSalesReport(data);
         }
       })
-      .catch(err => console.error("Erro ao carregar vendas iniciais via API:", err));
+      .catch(err => console.error("Erro ao carregar vendas via API:", err));
+  };
+
+  // Recarregar relatório de vendas ao alternar para visualizações de administração
+  useEffect(() => {
+    if (view === 'admin' || view === 'admin_history') {
+      fetchSalesReport();
+    }
+  }, [view]);
+
+  // Inicializar Socket.io e carregar vendas iniciais
+  useEffect(() => {
+    // Carregar vendas iniciais via REST API (Garante carregamento imediato)
+    fetchSalesReport();
 
     const newSocket = io();
     setSocket(newSocket);
@@ -404,43 +458,48 @@ const App = () => {
   // Função para excluir venda (Exclusivo para o Administrador Autenticado)
   const deleteSale = (id: number) => {
     if (!isAdminAuthenticated) {
-      alert("Acesso negado. Apenas o administrador autenticado pode realizar a exclusão de compras.");
+      triggerToast("Acesso negado. Apenas o administrador autenticado pode realizar a exclusão de compras.", "error");
       return;
     }
 
     if (!adminCredentials.login || !adminCredentials.password) {
-      alert("Erro de autenticação: credenciais do Administrador não fornecidas.");
+      triggerToast("Erro de autenticação: credenciais do Administrador não fornecidas.", "error");
       return;
     }
 
-    if (!confirm("Tem certeza de que deseja excluir permanentemente esta compra do banco de dados?")) {
-      return;
-    }
-
-    // Executa a exclusão de forma segura com validação de senha no backend
-    fetch(`/api/sales/${id}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
+    triggerConfirm(
+      "Confirmar Exclusão",
+      "Tem certeza de que deseja excluir permanentemente esta compra do banco de dados?",
+      () => {
+        // Executa a exclusão de forma segura com validação de senha no backend
+        fetch(`/api/sales/${id}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            login: adminCredentials.login,
+            password: adminCredentials.password
+          }),
+        })
+          .then(res => res.json())
+          .then(result => {
+            if (result.success) {
+              // Atualiza o estado local para remoção imediata
+              setSalesReport(prev => prev.filter(s => s.id !== id));
+              triggerToast("Compra excluída com sucesso!", "success");
+            } else {
+              triggerToast(result.error || "Ocorreu um erro ao tentar excluir o registro.", "error");
+            }
+          })
+          .catch(err => {
+            console.error("Erro ao excluir venda:", err);
+            triggerToast("Erro de rede ao tentar excluir o registro do banco de dados.", "error");
+          });
       },
-      body: JSON.stringify({
-        login: adminCredentials.login,
-        password: adminCredentials.password
-      }),
-    })
-      .then(res => res.json())
-      .then(result => {
-        if (result.success) {
-          // Atualiza o estado local para remoção imediata
-          setSalesReport(prev => prev.filter(s => s.id !== id));
-        } else {
-          alert(result.error || "Ocorreu um erro ao tentar excluir o registro.");
-        }
-      })
-      .catch(err => {
-        console.error("Erro ao excluir venda:", err);
-        alert("Erro de rede ao tentar excluir o registro do banco de dados.");
-      });
+      "danger",
+      "Excluir"
+    );
   };
 
   // Função para copiar PIX (compatível com o ambiente)
@@ -462,7 +521,7 @@ const App = () => {
   // Notificação via WhatsApp
   const handleWhatsAppNotify = () => {
     if (!currentSaleHash) {
-      alert("Aguardando confirmação do servidor... tente novamente em um instante.");
+      triggerToast("Aguardando confirmação do servidor... tente novamente em um instante.", "info");
       return;
     }
     const total = ticketsCount * currentPrice;
@@ -714,6 +773,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     if (adminCredentials.login === 'Sunset' && adminCredentials.password === '124578') {
       setIsAdminAuthenticated(true);
       setLoginError('');
+      fetchSalesReport();
     } else {
       setLoginError('Credenciais inválidas. Tente novamente.');
     }
@@ -726,17 +786,44 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
   };
 
   const confirmDelivery = (sale: any) => {
-    if (!confirm(`Confirmar entrega das pulseiras para ${sale.name}?`)) return;
-
-    if (socket) {
-      socket.emit('confirm_delivery', sale.id);
-      
-      // Notificação via WhatsApp
-      const message = `*CONFIRMAÇÃO DE ENTREGA* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos que você acaba de retirar suas pulseiras para o *Sunset 360º 3ª Edição*! 🌅✨%0A%0ATudo pronto para o evento! Nos vemos lá!%0A%0A📍 *Local:* ${EVENT_LOCATION}%0A📅 *Data:* 19 de Setembro%0A%0A📸 *Siga-nos:* https://www.instagram.com/sunset360_3edicao`;
-      
-      const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
-      window.open(waUrl, '_blank');
-    }
+    triggerConfirm(
+      "Confirmar Entrega",
+      `Confirmar entrega das pulseiras para ${sale.name}?`,
+      () => {
+        // Sincroniza via REST API de forma confiável
+        fetch(`/api/sales/${sale.id}/deliver`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        })
+          .then(res => res.json())
+          .then(result => {
+            if (result.success) {
+              // Atualiza o estado local imediatamente
+              setSalesReport(prev => prev.map(s => s.id === sale.id ? { ...s, status: 'Entregue' } : s));
+              triggerToast("Entrega confirmada com sucesso!", "success");
+              
+              // Abre o link do WhatsApp para notificação
+              const message = `*CONFIRMAÇÃO DE ENTREGA* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos que você acaba de retirar suas pulseiras para o *Sunset 360º 3ª Edição*! 🌅✨%0A%0ATudo pronto para o evento! Nos vemos lá!%0A%0A📍 *Local:* ${EVENT_LOCATION}%0A📅 *Data:* 19 de Setembro%0A%0A📸 *Siga-nos:* https://www.instagram.com/sunset360_3edicao`;
+              const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
+              window.open(waUrl, '_blank');
+            } else {
+              triggerToast("Ocorreu um erro ao atualizar o status de entrega.", "error");
+            }
+          })
+          .catch(err => {
+            console.error("Erro ao confirmar entrega:", err);
+            // Tenta enviar via socket como fallback caso a API falhe
+            if (socket) {
+              socket.emit('confirm_delivery', sale.id);
+            }
+            // Sincroniza localmente
+            setSalesReport(prev => prev.map(s => s.id === sale.id ? { ...s, status: 'Entregue' } : s));
+            triggerToast("Entrega confirmada localmente.", "info");
+          });
+      }
+    );
   };
   const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
   const casadinhoSalesCount = salesReport.filter(sale => sale.type === 'casadinho').reduce((acc, sale) => acc + sale.qty, 0);
@@ -774,7 +861,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
   const handleExportCSV = () => {
     if (salesReport.length === 0) {
-      alert('Não há dados para exportar.');
+      triggerToast('Não há dados para exportar.', 'info');
       return;
     }
 
@@ -1401,7 +1488,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                       <div className="text-center">
                         <button 
                           type="button"
-                          onClick={() => alert('Funcionalidade de recuperação de senha não implementada. Entre em contato com o suporte técnico.')}
+                          onClick={() => triggerToast('Funcionalidade de recuperação de senha não implementada. Entre em contato com o suporte técnico.', 'info')}
                           className="text-[10px] text-neutral-500 hover:text-orange-500 uppercase font-black tracking-widest italic transition-colors"
                         >
                           Esqueceu a senha?
@@ -1571,9 +1658,16 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                   {!promoEnded ? (
                      <button 
                         onClick={() => {
-                          if (confirm('Deseja realmente encerrar a promoção de copos manualmente?')) {
-                            setPromoEnded(true);
-                          }
+                          triggerConfirm(
+                            "Encerrar Promoção",
+                            "Deseja realmente encerrar a promoção de copos manualmente?",
+                            () => {
+                              setPromoEnded(true);
+                              triggerToast("Promoção encerrada com sucesso!", "success");
+                            },
+                            "danger",
+                            "Encerrar"
+                          );
                         }}
                         className={`w-full font-black py-3 rounded-xl text-xs uppercase tracking-widest italic shadow-lg transition-all active:scale-95 ${totalCupsGiven >= PROMO_LIMIT ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20 animate-bounce' : 'bg-neutral-800 text-neutral-400 border border-neutral-700 hover:text-white hover:border-red-500/50'}`}
                      >
@@ -1854,6 +1948,72 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
           <span className="text-[9px] font-black uppercase tracking-tighter italic text-pretty leading-none">Convites</span>
         </button>
       </nav>
+
+      {/* Toast Customizado */}
+      <AnimatePresence>
+        {customToast.show && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xs px-4"
+          >
+            <div className={`p-4 rounded-xl border font-black italic uppercase tracking-tighter shadow-2xl flex items-center gap-3 backdrop-blur-md text-[11px] ${
+              customToast.type === 'success' 
+                ? 'bg-green-500/15 border-green-500/30 text-green-400' 
+                : customToast.type === 'error'
+                ? 'bg-red-500/15 border-red-500/30 text-red-400'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+            }`}>
+              <AlertCircle size={16} className="shrink-0 text-orange-500" />
+              <span>{customToast.message}</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Confirmação Customizado */}
+      <AnimatePresence>
+        {customConfirm.show && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="bg-neutral-900 border border-neutral-800 rounded-[24px] p-6 max-w-sm w-full space-y-4 shadow-2xl font-bold italic"
+            >
+              <div className="flex items-center gap-2.5 text-orange-500">
+                <AlertCircle size={20} className="shrink-0 animate-pulse text-orange-500" />
+                <h3 className="text-sm font-black uppercase tracking-widest">{customConfirm.title}</h3>
+              </div>
+              <p className="text-neutral-300 text-xs leading-relaxed uppercase tracking-tight">{customConfirm.message}</p>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setCustomConfirm(prev => ({ ...prev, show: false }))}
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-black py-3 rounded-xl uppercase tracking-widest text-[9px] transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={customConfirm.onConfirm}
+                  className={`flex-1 font-black py-3 rounded-xl uppercase tracking-widest text-[9px] transition-all ${
+                    customConfirm.type === 'danger' 
+                      ? 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/20' 
+                      : 'bg-orange-600 hover:bg-orange-700 text-white shadow-lg shadow-orange-600/20'
+                  }`}
+                >
+                  {customConfirm.confirmLabel || 'Confirmar'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

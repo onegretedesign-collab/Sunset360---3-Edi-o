@@ -144,6 +144,22 @@ async function startServer() {
     }
   });
 
+  // Confirm delivery of a sale via REST
+  app.post("/api/sales/:id/deliver", (req, res) => {
+    try {
+      const saleId = req.params.id;
+      db.prepare("UPDATE sales SET status = 'Entregue' WHERE id = ?").run(saleId);
+      
+      // Emit socket event for real-time dashboard updates
+      io.emit("sale_updated", { id: Number(saleId), status: 'Entregue' });
+      
+      res.json({ success: true, message: "Status atualizado para Entregue com sucesso." });
+    } catch (e: any) {
+      console.error("Error confirming delivery via API:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Socket.io logic
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
