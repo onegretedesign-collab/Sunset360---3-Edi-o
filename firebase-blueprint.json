@@ -9,12 +9,34 @@
         "token": { "type": "string", "description": "The FCM token." }
       },
       "required": ["userId", "token"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Stores ticket purchases for the Sunset 360 event.",
+      "type": "object",
+      "properties": {
+        "hash": { "type": "string", "description": "Unique purchase hash identifier." },
+        "name": { "type": "string", "description": "Full name of the ticket holder." },
+        "whatsapp": { "type": "string", "description": "WhatsApp contact number." },
+        "cpf": { "type": "string", "description": "CPF number of the buyer." },
+        "type": { "type": "string", "description": "Ticket type: individual or casadinho.", "enum": ["individual", "casadinho"] },
+        "qty": { "type": "integer", "description": "Quantity of tickets purchased." },
+        "total": { "type": "integer", "description": "Total payment in Reais." },
+        "method": { "type": "string", "description": "Payment method: PIX or Retirada." },
+        "date": { "type": "string", "description": "Date of the purchase (YYYY-MM-DD)." },
+        "status": { "type": "string", "description": "Delivery status: Ativa or Entregue.", "enum": ["Ativa", "Entregue"] }
+      },
+      "required": ["hash", "name", "type", "qty", "total", "method", "date", "status"]
     }
   },
   "firestore": {
     "/userTokens/{tokenId}": {
       "schema": "UserToken",
       "description": "Collection of FCM tokens."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Collection of event sales."
     }
   }
 }

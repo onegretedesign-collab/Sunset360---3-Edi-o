@@ -5,9 +5,18 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Carrega as credenciais do Firebase
+const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const firebaseApp = initializeApp(firebaseConfig);
+const firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 const db = new Database("sales.db");
 
@@ -74,7 +83,100 @@ try {
   console.error("Error migrating hashes:", e);
 }
 
+// Sincronização com o Firestore para persistência global durável em nuvem
+async function saveToFirestore(saleData: any) {
+  try {
+    const docRef = doc(firestoreDb, "sales", saleData.hash);
+    await setDoc(docRef, {
+      hash: saleData.hash,
+      name: saleData.name,
+      whatsapp: saleData.whatsapp || '',
+      cpf: saleData.cpf || '',
+      type: saleData.type,
+      qty: Number(saleData.qty),
+      total: Number(saleData.total),
+      method: saleData.method,
+      date: saleData.date,
+      status: saleData.status
+    });
+    console.log(`Saved sale to Firestore: ${saleData.hash}`);
+  } catch (e) {
+    console.error(`Error saving sale to Firestore (${saleData.hash}):`, e);
+  }
+}
+
+async function updateFirestoreSaleStatus(hash: string, status: string) {
+  try {
+    const docRef = doc(firestoreDb, "sales", hash);
+    await updateDoc(docRef, { status });
+    console.log(`Updated sale status in Firestore: ${hash} -> ${status}`);
+  } catch (e) {
+    console.error(`Error updating sale status in Firestore (${hash}):`, e);
+  }
+}
+
+async function deleteFromFirestore(hash: string) {
+  try {
+    const docRef = doc(firestoreDb, "sales", hash);
+    await deleteDoc(docRef);
+    console.log(`Deleted sale from Firestore: ${hash}`);
+  } catch (e) {
+    console.error(`Error deleting sale from Firestore (${hash}):`, e);
+  }
+}
+
+async function syncFromFirestore() {
+  try {
+    console.log("Synchronizing sales from Firestore...");
+    const salesCol = collection(firestoreDb, "sales");
+    const snapshot = await getDocs(salesCol);
+    
+    let countNew = 0;
+    let countUpdated = 0;
+    
+    const checkHash = db.prepare("SELECT * FROM sales WHERE hash = ?");
+    const insertSale = db.prepare(`
+      INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const updateSaleStatus = db.prepare("UPDATE sales SET status = ? WHERE hash = ?");
+    
+    const runSync = db.transaction(() => {
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const existing = checkHash.get(data.hash) as any;
+        if (!existing) {
+          insertSale.run(
+            data.hash,
+            data.name,
+            data.whatsapp || '',
+            data.cpf || '',
+            data.type,
+            data.qty,
+            data.total,
+            data.method,
+            data.date,
+            data.status
+          );
+          countNew++;
+        } else if (existing.status !== data.status) {
+          updateSaleStatus.run(data.status, data.hash);
+          countUpdated++;
+        }
+      });
+    });
+    
+    runSync();
+    console.log(`Synchronization complete: ${countNew} new sales inserted, ${countUpdated} sales updated.`);
+  } catch (e) {
+    console.error("Error during Firestore synchronization:", e);
+  }
+}
+
 async function startServer() {
+  // Sincroniza vendas do Firestore para o SQLite ao iniciar o servidor
+  await syncFromFirestore();
+
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -112,6 +214,9 @@ async function startServer() {
       
       const newSale = { id: info.lastInsertRowid, hash, ...saleData };
       
+      // Salva no Firestore de forma assíncrona
+      saveToFirestore(newSale);
+
       // Emit socket event for real-time dashboard updates
       io.emit("sale_added", newSale);
       
@@ -132,8 +237,15 @@ async function startServer() {
         return res.status(401).json({ success: false, error: "Acesso negado. Apenas o administrador autenticado com login e senha corretos pode excluir compras." });
       }
 
+      // Busca a venda para obter o hash antes de excluir
+      const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+
       db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
       
+      if (sale && sale.hash) {
+        deleteFromFirestore(sale.hash);
+      }
+
       // Emit socket event for real-time dashboard updates
       io.emit("sale_deleted", Number(saleId));
       
@@ -150,6 +262,12 @@ async function startServer() {
       const saleId = req.params.id;
       db.prepare("UPDATE sales SET status = 'Entregue' WHERE id = ?").run(saleId);
       
+      // Busca a venda para obter o hash e atualizar no Firestore
+      const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+      if (sale && sale.hash) {
+        updateFirestoreSaleStatus(sale.hash, 'Entregue');
+      }
+
       // Emit socket event for real-time dashboard updates
       io.emit("sale_updated", { id: Number(saleId), status: 'Entregue' });
       
@@ -178,6 +296,10 @@ async function startServer() {
       `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status);
       
       const newSale = { id: info.lastInsertRowid, hash, ...saleData };
+      
+      // Salva no Firestore de forma assíncrona
+      saveToFirestore(newSale);
+
       io.emit("sale_added", newSale);
       socket.emit("sale_confirmed", newSale); // Send back to the creator so they get the hash
     });
@@ -193,6 +315,13 @@ async function startServer() {
 
     socket.on("confirm_delivery", (saleId) => {
       db.prepare("UPDATE sales SET status = 'Entregue' WHERE id = ?").run(saleId);
+      
+      // Busca a venda para obter o hash e atualizar no Firestore
+      const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+      if (sale && sale.hash) {
+        updateFirestoreSaleStatus(sale.hash, 'Entregue');
+      }
+
       io.emit("sale_updated", { id: saleId, status: 'Entregue' });
     });
 
@@ -216,7 +345,15 @@ async function startServer() {
 
       if (login === "Sunset" && password === "124578") {
         try {
+          // Busca a venda para obter o hash antes de excluir
+          const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+
           db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
+
+          if (sale && sale.hash) {
+            deleteFromFirestore(sale.hash);
+          }
+
           io.emit("sale_deleted", Number(saleId));
         } catch (err) {
           console.error("Error executing delete via socket:", err);
