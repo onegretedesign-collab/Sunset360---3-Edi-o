@@ -90,8 +90,58 @@ async function startServer() {
   app.use(express.json());
 
   app.get("/api/sales", (req, res) => {
-    const sales = db.prepare("SELECT * FROM sales ORDER BY id DESC").all();
-    res.json(sales);
+    try {
+      const sales = db.prepare("SELECT * FROM sales ORDER BY id DESC").all();
+      res.json(sales);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Create a new purchase via REST (robust fallback/primary storage check)
+  app.post("/api/sales", (req, res) => {
+    try {
+      const saleData = req.body;
+      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status } = saleData;
+      const hash = clientHash || generateHash();
+      
+      const info = db.prepare(`
+        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status);
+      
+      const newSale = { id: info.lastInsertRowid, hash, ...saleData };
+      
+      // Emit socket event for real-time dashboard updates
+      io.emit("sale_added", newSale);
+      
+      res.status(201).json({ success: true, sale: newSale });
+    } catch (e: any) {
+      console.error("Error creating sale via API:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Delete a sale via REST - ONLY with correct admin login and password
+  app.delete("/api/sales/:id", (req, res) => {
+    try {
+      const saleId = req.params.id;
+      const { login, password } = req.body || {};
+
+      if (login !== "Sunset" || password !== "124578") {
+        return res.status(401).json({ success: false, error: "Acesso negado. Apenas o administrador autenticado com login e senha corretos pode excluir compras." });
+      }
+
+      db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
+      
+      // Emit socket event for real-time dashboard updates
+      io.emit("sale_deleted", Number(saleId));
+      
+      res.json({ success: true, message: "Venda excluída com sucesso." });
+    } catch (e: any) {
+      console.error("Error deleting sale via API:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
   });
 
   // Socket.io logic
@@ -135,9 +185,29 @@ async function startServer() {
       io.emit("promo_status", status);
     });
 
-    socket.on("delete_sale", (saleId) => {
-      db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
-      io.emit("sale_deleted", saleId);
+    socket.on("delete_sale", (data) => {
+      let saleId: any;
+      let login = "";
+      let password = "";
+      
+      if (data && typeof data === "object") {
+        saleId = data.id;
+        login = data.login;
+        password = data.password;
+      } else {
+        saleId = data;
+      }
+
+      if (login === "Sunset" && password === "124578") {
+        try {
+          db.prepare("DELETE FROM sales WHERE id = ?").run(saleId);
+          io.emit("sale_deleted", Number(saleId));
+        } catch (err) {
+          console.error("Error executing delete via socket:", err);
+        }
+      } else {
+        console.warn("Tentativa não autorizada de exclusão via socket para ID:", saleId);
+      }
     });
 
     socket.on("disconnect", () => {

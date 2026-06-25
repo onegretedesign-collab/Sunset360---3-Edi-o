@@ -322,8 +322,18 @@ const App = () => {
     }
   }, [myTickets]);
 
-  // Inicializar Socket.io
+  // Inicializar Socket.io e carregar vendas iniciais
   useEffect(() => {
+    // Carregar vendas iniciais via REST API (Garante carregamento imediato)
+    fetch('/api/sales')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setSalesReport(data);
+        }
+      })
+      .catch(err => console.error("Erro ao carregar vendas iniciais via API:", err));
+
     const newSocket = io();
     setSocket(newSocket);
 
@@ -391,11 +401,46 @@ const App = () => {
 
   const currentPrice = PRICES[ticketType as keyof typeof PRICES];
 
-  // Função para excluir venda (Admin)
+  // Função para excluir venda (Exclusivo para o Administrador Autenticado)
   const deleteSale = (id: number) => {
-    if (socket) {
-      socket.emit('delete_sale', id);
+    if (!isAdminAuthenticated) {
+      alert("Acesso negado. Apenas o administrador autenticado pode realizar a exclusão de compras.");
+      return;
     }
+
+    if (!adminCredentials.login || !adminCredentials.password) {
+      alert("Erro de autenticação: credenciais do Administrador não fornecidas.");
+      return;
+    }
+
+    if (!confirm("Tem certeza de que deseja excluir permanentemente esta compra do banco de dados?")) {
+      return;
+    }
+
+    // Executa a exclusão de forma segura com validação de senha no backend
+    fetch(`/api/sales/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        login: adminCredentials.login,
+        password: adminCredentials.password
+      }),
+    })
+      .then(res => res.json())
+      .then(result => {
+        if (result.success) {
+          // Atualiza o estado local para remoção imediata
+          setSalesReport(prev => prev.filter(s => s.id !== id));
+        } else {
+          alert(result.error || "Ocorreu um erro ao tentar excluir o registro.");
+        }
+      })
+      .catch(err => {
+        console.error("Erro ao excluir venda:", err);
+        alert("Erro de rede ao tentar excluir o registro do banco de dados.");
+      });
   };
 
   // Função para copiar PIX (compatível com o ambiente)
@@ -635,12 +680,32 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       status: 'Ativa'
     };
     
-    if (socket) {
-      socket.emit('new_sale', saleData);
-    }
+    // Adicionar localmente para feedback imediato (será atualizado e sincronizado com ID real)
+    const tempTicket = { ...saleData, id: Date.now() };
+    setMyTickets([...myTickets, tempTicket]); 
     
-    // Adicionar localmente para feedback imediato (será atualizado pelo socket)
-    setMyTickets([...myTickets, { ...saleData, id: Date.now() }]); 
+    // Envia a compra para ser registrada de forma segura no banco de dados via REST API
+    fetch('/api/sales', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(saleData),
+    })
+      .then(res => res.json())
+      .then(result => {
+        if (result.success && result.sale) {
+          // Atualiza o ticket local com o ID real gerado pelo SQLite
+          setMyTickets(prev => prev.map(t => t.hash === generatedHash ? result.sale : t));
+        }
+      })
+      .catch(err => {
+        console.error("Erro ao registrar compra via API, tentando via socket:", err);
+        if (socket) {
+          socket.emit('new_sale', saleData);
+        }
+      });
+      
     setView('success');
   };
 
