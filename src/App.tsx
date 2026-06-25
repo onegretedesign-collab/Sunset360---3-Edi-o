@@ -33,6 +33,8 @@ import {
   Volume2,
   VolumeX,
   Sparkles,
+  PlusCircle,
+  Check,
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -67,6 +69,22 @@ const App = () => {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
+
+  // Estados para Registro de Venda Manual pelo Admin
+  const [showManualSaleForm, setShowManualSaleForm] = useState(false);
+  const [manualSaleData, setManualSaleData] = useState({
+    name: '',
+    whatsapp: '',
+    cpf: '',
+    type: 'individual',
+    qty: 1,
+    method: 'PIX'
+  });
+  const [manualSaleErrors, setManualSaleErrors] = useState({
+    name: '',
+    whatsapp: '',
+    cpf: ''
+  });
 
   const [customToast, setCustomToast] = useState<{
     show: boolean;
@@ -519,14 +537,10 @@ const App = () => {
   };
 
   // Notificação via WhatsApp
-  const handleWhatsAppNotify = () => {
-    if (!currentSaleHash) {
-      triggerToast("Aguardando confirmação do servidor... tente novamente em um instante.", "info");
-      return;
-    }
-    const total = ticketsCount * currentPrice;
-    const cups = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
-    const wristbands = (ticketType === 'individual' ? 1 : 2) * ticketsCount;
+  const sendWhatsAppNotification = (sale: any) => {
+    const total = sale.total || (sale.qty * PRICES[sale.type as keyof typeof PRICES]);
+    const cups = sale.cups || ((sale.type === 'individual' ? 1 : 2) * sale.qty);
+    const wristbands = sale.wristbands || ((sale.type === 'individual' ? 1 : 2) * sale.qty);
     
     const formattedDate = new Date().toLocaleString('pt-BR', { 
       day: '2-digit', 
@@ -536,17 +550,17 @@ const App = () => {
       minute: '2-digit'
     }).replace(',', ' às');
 
-    const paymentMethodText = paymentMethod === 'pix' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega';
+    const paymentMethodText = sale.method === 'PIX' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega';
 
     const messageText = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨
 
 📅 *Data:* 19 de Setembro às 18 horas
 
 *DADOS DA COMPRA:*
-👤 *Comprador:* ${userData.name}
+👤 *Comprador:* ${sale.name}
 📅 *Data/Hora da compra:* ${formattedDate}
-🎟️ *Convite:* ${TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}
-🔢 *Quantidade:* ${ticketsCount}
+🎟️ *Convite:* ${TICKET_LABELS[sale.type as keyof typeof TICKET_LABELS]}
+🔢 *Quantidade:* ${sale.qty}
 🥤 *Copos:* ${cups}
 🎗️ *Pulseiras:* ${wristbands}
 💰 *Valor Total:* R$ ${total},00
@@ -569,8 +583,35 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
     const message = encodeURIComponent(messageText);
     
-    const waUrl = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
-    window.open(waUrl, '_blank');
+    // Abrir aba para o Organizador
+    const waUrlOrganizer = `https://api.whatsapp.com/send?phone=${ORGANIZER_WA}&text=${message}`;
+    window.open(waUrlOrganizer, '_blank');
+    
+    // Abrir aba para o Comprador
+    const buyerPhone = sale.whatsapp.replace(/\D/g, '');
+    if (buyerPhone && buyerPhone !== ORGANIZER_WA) {
+      setTimeout(() => {
+        const waUrlBuyer = `https://api.whatsapp.com/send?phone=${buyerPhone}&text=${message}`;
+        window.open(waUrlBuyer, '_blank');
+      }, 1200);
+    }
+  };
+
+  const handleWhatsAppNotify = () => {
+    if (!currentSaleHash) {
+      triggerToast("Aguardando confirmação do servidor... tente novamente em um instante.", "info");
+      return;
+    }
+    const saleData = {
+      name: userData.name,
+      whatsapp: userData.whatsapp,
+      cpf: userData.cpf,
+      type: ticketType,
+      qty: ticketsCount,
+      total: ticketsCount * currentPrice,
+      method: paymentMethod === 'pix' ? 'PIX' : 'Retirada'
+    };
+    sendWhatsAppNotification(saleData);
   };
 
   const handleShare = async () => {
@@ -783,6 +824,84 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     setIsAdminAuthenticated(false);
     setAdminCredentials({ login: '', password: '' });
     setView('home');
+  };
+
+  const handleRegisterManualSale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newErrors = { name: '', whatsapp: '', cpf: '' };
+    let isValid = true;
+
+    if (manualSaleData.name.trim().length < 3) {
+      newErrors.name = 'O nome deve ter pelo menos 3 caracteres.';
+      isValid = false;
+    }
+
+    const whatsappDigits = manualSaleData.whatsapp.replace(/\D/g, '');
+    if (whatsappDigits.length < 10 || whatsappDigits.length > 11) {
+      newErrors.whatsapp = 'Informe um WhatsApp válido com DDD (ex: 64999999999).';
+      isValid = false;
+    }
+
+    if (!manualSaleData.cpf) {
+      newErrors.cpf = 'O CPF é obrigatório.';
+      isValid = false;
+    } else if (!validateCPF(manualSaleData.cpf)) {
+      newErrors.cpf = 'Informe um CPF válido e bem formatado.';
+      isValid = false;
+    }
+
+    setManualSaleErrors(newErrors);
+
+    if (isValid) {
+      const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      const currentPrice = PRICES[manualSaleData.type as keyof typeof PRICES];
+      const sale = {
+        hash: generatedHash,
+        name: manualSaleData.name,
+        whatsapp: manualSaleData.whatsapp.replace(/\D/g, ''),
+        cpf: manualSaleData.cpf.replace(/\D/g, ''),
+        type: manualSaleData.type,
+        qty: manualSaleData.qty,
+        cups: (manualSaleData.type === 'individual' ? 1 : 2) * manualSaleData.qty,
+        wristbands: (manualSaleData.type === 'individual' ? 1 : 2) * manualSaleData.qty,
+        total: manualSaleData.qty * currentPrice,
+        method: manualSaleData.method,
+        date: new Date().toISOString().split('T')[0],
+        status: 'Ativa'
+      };
+
+      try {
+        const response = await fetch('/api/sales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sale)
+        });
+        const result = await response.json();
+        if (result.success) {
+          triggerToast("Venda manual registrada com sucesso e lançada no dashboard!", "success");
+          
+          setManualSaleData({
+            name: '',
+            whatsapp: '',
+            cpf: '',
+            type: 'individual',
+            qty: 1,
+            method: 'PIX'
+          });
+          setShowManualSaleForm(false);
+          
+          fetchSalesReport();
+          
+          // Executa a notificação via WhatsApp para ambos
+          sendWhatsAppNotification(result.sale);
+        } else {
+          triggerToast("Erro ao registrar venda: " + result.error, "error");
+        }
+      } catch (err: any) {
+        console.error("Erro ao registrar venda manual:", err);
+        triggerToast("Erro ao conectar com o servidor.", "error");
+      }
+    }
   };
 
   const confirmDelivery = (sale: any) => {
@@ -1537,13 +1656,146 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                         
                         <button 
                           onClick={triggerTestNotification}
-                          className="bg-orange-600 hover:bg-orange-700 text-white font-black text-[9px] uppercase italic px-3 py-1.5 rounded-xl shadow-lg shadow-orange-600/10 transition-all active:scale-95 flex items-center gap-1.5 text-nowrap"
+                          className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 font-black text-[9px] uppercase italic px-3 py-1.5 rounded-xl shadow-lg border border-neutral-700 transition-all active:scale-95 flex items-center gap-1.5 text-nowrap"
                         >
                           <Sparkles size={11} className="animate-pulse" />
                           <span>Simular Venda</span>
                         </button>
+
+                        <button 
+                          onClick={() => setShowManualSaleForm(!showManualSaleForm)}
+                          className="bg-orange-600 hover:bg-orange-700 text-white font-black text-[9px] uppercase italic px-3 py-1.5 rounded-xl shadow-lg shadow-orange-600/10 transition-all active:scale-95 flex items-center gap-1.5 text-nowrap"
+                        >
+                          <PlusCircle size={11} className="animate-pulse" />
+                          <span>Registrar Venda Manual</span>
+                        </button>
                       </div>
                     </div>
+
+                    {showManualSaleForm && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 shadow-2xl space-y-4 text-left leading-tight mb-4"
+                      >
+                        <div className="flex justify-between items-center pb-2 border-b border-neutral-800">
+                          <h3 className="font-bold text-sm text-orange-500 uppercase tracking-widest italic flex items-center gap-2">
+                            <PlusCircle size={16} /> REGISTRAR VENDA MANUAL
+                          </h3>
+                          <button 
+                            onClick={() => setShowManualSaleForm(false)} 
+                            className="text-neutral-500 hover:text-white text-xs font-black uppercase italic"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                        
+                        <form onSubmit={handleRegisterManualSale} className="grid grid-cols-1 md:grid-cols-2 gap-4 italic font-bold text-xs">
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Nome do Comprador</label>
+                            <input 
+                              type="text" 
+                              required
+                              value={manualSaleData.name}
+                              onChange={(e) => setManualSaleData({ ...manualSaleData, name: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                              placeholder="Ex: João da Silva"
+                            />
+                            {manualSaleErrors.name && <p className="text-red-500 text-[10px] uppercase font-black">{manualSaleErrors.name}</p>}
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">WhatsApp do Comprador</label>
+                            <input 
+                              type="text" 
+                              required
+                              value={manualSaleData.whatsapp}
+                              onChange={(e) => {
+                                const formatted = formatWhatsApp(e.target.value);
+                                setManualSaleData({ ...manualSaleData, whatsapp: formatted });
+                              }}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                              placeholder="(64) 99999-9999"
+                            />
+                            {manualSaleErrors.whatsapp && <p className="text-red-500 text-[10px] uppercase font-black">{manualSaleErrors.whatsapp}</p>}
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">CPF do Comprador</label>
+                            <input 
+                              type="text" 
+                              required
+                              value={manualSaleData.cpf}
+                              onChange={(e) => {
+                                const formatted = formatCPF(e.target.value);
+                                setManualSaleData({ ...manualSaleData, cpf: formatted });
+                              }}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                              placeholder="000.000.000-00"
+                            />
+                            {manualSaleErrors.cpf && <p className="text-red-500 text-[10px] uppercase font-black">{manualSaleErrors.cpf}</p>}
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Tipo de Ingresso</label>
+                            <select 
+                              value={manualSaleData.type}
+                              onChange={(e) => setManualSaleData({ ...manualSaleData, type: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                            >
+                              <option value="individual">Individual</option>
+                              <option value="casadinho">Casadinho</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Quantidade de Pacotes</label>
+                            <div className="flex items-center gap-2">
+                              <button 
+                                type="button" 
+                                onClick={() => setManualSaleData(prev => ({ ...prev, qty: Math.max(1, prev.qty - 1) }))} 
+                                className="w-8 h-8 rounded border border-neutral-700 text-white flex items-center justify-center font-bold"
+                              >
+                                -
+                              </button>
+                              <span className="text-base text-white font-black">{manualSaleData.qty}</span>
+                              <button 
+                                type="button" 
+                                onClick={() => setManualSaleData(prev => ({ ...prev, qty: prev.qty + 1 }))} 
+                                className="w-8 h-8 rounded bg-orange-500 text-black flex items-center justify-center font-bold"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Forma de Pagamento</label>
+                            <select 
+                              value={manualSaleData.method}
+                              onChange={(e) => setManualSaleData({ ...manualSaleData, method: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                            >
+                              <option value="PIX">PIX</option>
+                              <option value="Dinheiro">Dinheiro / Retirada</option>
+                            </select>
+                          </div>
+
+                          <div className="md:col-span-2 pt-2 flex justify-between items-center">
+                            <span className="text-neutral-400 font-bold uppercase tracking-widest text-[10px]">
+                              Total: <span className="text-orange-500 font-black text-sm">R$ {manualSaleData.qty * PRICES[manualSaleData.type as keyof typeof PRICES]},00</span>
+                            </span>
+                            <button 
+                              type="submit" 
+                              className="bg-green-600 hover:bg-green-700 text-white font-black px-6 py-2.5 rounded-xl shadow-lg shadow-green-500/10 transition-all uppercase tracking-widest text-xs flex items-center gap-2"
+                            >
+                              <Check size={14} /> SALVAR & NOTIFICAR WHATSAPP
+                            </button>
+                          </div>
+                        </form>
+                      </motion.div>
+                    )}
 
                 <div className="grid grid-cols-2 gap-3 leading-tight">
                   <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 shadow-lg">
