@@ -7,7 +7,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, deleteDoc, setLogLevel } from "firebase/firestore";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +16,9 @@ const __dirname = path.dirname(__filename);
 const configPath = path.join(process.cwd(), "firebase-applet-config.json");
 const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const firebaseApp = initializeApp(firebaseConfig);
+
+setLogLevel("silent");
+
 const firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 const db = new Database("sales.db");
