@@ -706,6 +706,19 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       const formattedCpf = ticket.cpf ? formatCPF(ticket.cpf) : 'NÃO INFORMADO';
       doc.text(formattedCpf, 15, detailsValue2Y);
 
+      const isCpfValid = ticket.cpf ? validateCPF(ticket.cpf) : false;
+      if (isCpfValid) {
+        const cpfWidth = doc.getTextWidth(formattedCpf);
+        const badgeX = 15 + cpfWidth + 2;
+        doc.setTextColor(34, 197, 94); // emerald-500
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text('✓ VALIDADO', badgeX, detailsValue2Y);
+        // Restore default styles for subsequent details
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(8.5);
+      }
+
       doc.setTextColor(115, 115, 115);
       doc.text('PULSEIRAS:', 65, detailsRow2Y);
       doc.setTextColor(249, 115, 22);
