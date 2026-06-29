@@ -1017,6 +1017,9 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         }
       });
       
+    // Envia a notificação automaticamente via WhatsApp para o organizador e comprador
+    sendWhatsAppNotification(saleData);
+      
     setView('success');
   };
 
