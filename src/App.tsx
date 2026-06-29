@@ -641,8 +641,14 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
       // Add logo image at the top
       const logoImg = document.getElementById('pdf-logo-img') as HTMLImageElement | null;
+      let headerBottom = 15; // default starting Y coordinate if logo is not loaded
       if (logoImg && logoImg.complete && logoImg.naturalWidth !== 0) {
-        doc.addImage(logoImg, 'JPEG', 27.5, 8, 50, 25);
+        const targetWidth = 50; // mm
+        const targetHeight = (targetWidth * logoImg.naturalHeight) / logoImg.naturalWidth;
+        const xPos = (105 - targetWidth) / 2; // center it horizontally
+        const yPos = 8; // top margin
+        doc.addImage(logoImg, 'PNG', xPos, yPos, targetWidth, targetHeight);
+        headerBottom = yPos + targetHeight;
       } else {
         // Fallback text if logo hasn't preloaded
         doc.setFillColor(249, 115, 22);
@@ -651,6 +657,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         doc.setFont('Helvetica', 'bold');
         doc.setFontSize(11);
         doc.text('SUNSET 360º - 3ª EDIÇÃO', 52.5, 9.5, { align: 'center' });
+        headerBottom = 15;
       }
 
       // Ticket category label
@@ -658,74 +665,91 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(12);
       const label = TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS] || ticket.type;
-      doc.text(label.toUpperCase(), 52.5, 42, { align: 'center' });
+      const categoryY = headerBottom + 10;
+      doc.text(label.toUpperCase(), 52.5, categoryY, { align: 'center' });
 
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(115, 115, 115);
-      doc.text(`ID DO CONVITE: #${ticket.id.toString().slice(-8).toUpperCase()}`, 52.5, 47, { align: 'center' });
+      const idY = categoryY + 5;
+      doc.text(`ID DO CONVITE: #${ticket.id.toString().slice(-8).toUpperCase()}`, 52.5, idY, { align: 'center' });
 
       // Divider line
       doc.setDrawColor(229, 229, 229);
       doc.setLineWidth(0.5);
-      doc.line(10, 51, 95, 51);
+      const divider1Y = idY + 4;
+      doc.line(10, divider1Y, 95, divider1Y);
 
       // Ticket Details
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(8.5);
+      
+      const detailsRow1Y = divider1Y + 8;
+      const detailsValue1Y = detailsRow1Y + 5;
+      
       doc.setTextColor(115, 115, 115);
-      doc.text('TITULAR:', 15, 59);
+      doc.text('TITULAR:', 15, detailsRow1Y);
       doc.setTextColor(26, 26, 26);
-      doc.text(ticket.name.toUpperCase(), 15, 64);
+      doc.text(ticket.name.toUpperCase(), 15, detailsValue1Y);
 
       doc.setTextColor(115, 115, 115);
-      doc.text('DOCUMENTO (CPF):', 15, 72);
+      doc.text('QUANTIDADE:', 65, detailsRow1Y);
+      doc.setTextColor(26, 26, 26);
+      doc.text(`${ticket.qty} Pacote(s)`, 65, detailsValue1Y);
+
+      const detailsRow2Y = detailsValue1Y + 8;
+      const detailsValue2Y = detailsRow2Y + 5;
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('DOCUMENTO (CPF):', 15, detailsRow2Y);
       doc.setTextColor(26, 26, 26);
       const formattedCpf = ticket.cpf ? formatCPF(ticket.cpf) : 'NÃO INFORMADO';
-      doc.text(formattedCpf, 15, 77);
+      doc.text(formattedCpf, 15, detailsValue2Y);
 
       doc.setTextColor(115, 115, 115);
-      doc.text('QUANTIDADE:', 65, 59);
-      doc.setTextColor(26, 26, 26);
-      doc.text(`${ticket.qty} Pacote(s)`, 65, 64);
-
-      doc.setTextColor(115, 115, 115);
-      doc.text('PULSEIRAS:', 65, 72);
+      doc.text('PULSEIRAS:', 65, detailsRow2Y);
       doc.setTextColor(249, 115, 22);
       const pulseirasText = `${ticket.qty * (ticket.type === 'individual' ? 1 : 2)} Unidade(s)`;
-      doc.text(pulseirasText, 65, 77);
+      doc.text(pulseirasText, 65, detailsValue2Y);
 
       // Cups calculation & detail
       const cupsQty = ticket.qty * (ticket.type === 'individual' ? 1 : 2);
       const ticketTypeLabel = ticket.type === 'individual' ? 'Individual' : 'Casadinho';
       const cupsText = `${cupsQty} Copo(s) (${ticket.qty}x ${ticketTypeLabel})`;
 
-      doc.setTextColor(115, 115, 115);
-      doc.text('COPOS GARANTIDOS:', 15, 85);
-      doc.setTextColor(26, 26, 26);
-      doc.text(cupsText, 15, 90);
+      const detailsRow3Y = detailsValue2Y + 8;
+      const detailsValue3Y = detailsRow3Y + 5;
 
-      // Divider line
+      doc.setTextColor(115, 115, 115);
+      doc.text('COPOS GARANTIDOS:', 15, detailsRow3Y);
+      doc.setTextColor(26, 26, 26);
+      doc.text(cupsText, 15, detailsValue3Y);
+
+      // Divider line 2
       doc.setDrawColor(229, 229, 229);
-      doc.line(10, 96, 95, 96);
+      const divider2Y = detailsValue3Y + 6;
+      doc.line(10, divider2Y, 95, divider2Y);
 
       // Footer instruction text (as requested by user)
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(26, 26, 26);
-      doc.text('APRESENTE ESSE COMPROVANTE NA HORA DE RETIRAR', 52.5, 105, { align: 'center' });
-      doc.text('SUA PULSEIRA NO PONTO DE VENDA.', 52.5, 110, { align: 'center' });
+      const instruct1Y = divider2Y + 8;
+      const instruct2Y = instruct1Y + 5;
+      doc.text('APRESENTE ESSE COMPROVANTE NA HORA DE RETIRAR', 52.5, instruct1Y, { align: 'center' });
+      doc.text('SUA PULSEIRA NO PONTO DE VENDA.', 52.5, instruct2Y, { align: 'center' });
 
       // Decorative dash line
       doc.setDrawColor(200, 200, 200);
       doc.setLineDashPattern([2, 2], 0);
-      doc.line(0, 120, 105, 120);
+      const dashY = instruct2Y + 10;
+      doc.line(0, dashY, 105, dashY);
 
       // Website footer
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(249, 115, 22);
-      doc.text('www.sunset360.com.br', 52.5, 130, { align: 'center' });
+      doc.text('www.sunset360.com.br', 52.5, dashY + 10, { align: 'center' });
 
       // Download file
       doc.save(`ingresso-sunset360-${ticket.id.toString().slice(-6)}.pdf`);
@@ -2399,7 +2423,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       </AnimatePresence>
       <img 
         id="pdf-logo-img" 
-        src="https://i.postimg.cc/3NTF6mYn/LOGO-EVENTO-SUNSET-360-3-EDICAO.jpg" 
+        src="https://i.postimg.cc/GmNCwhV0/LOGO-EVENTO-SUNSET-360-3-EDICAO.png" 
         alt="Logo PDF" 
         style={{ display: 'none' }} 
         crossOrigin="anonymous"
