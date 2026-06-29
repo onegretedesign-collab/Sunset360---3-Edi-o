@@ -281,6 +281,28 @@ async function startServer() {
     }
   });
 
+  // Activate a sale (confirm payment) via REST
+  app.post("/api/sales/:id/activate", (req, res) => {
+    try {
+      const saleId = req.params.id;
+      db.prepare("UPDATE sales SET status = 'Ativa' WHERE id = ?").run(saleId);
+      
+      // Busca a venda para obter o hash e atualizar no Firestore
+      const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+      if (sale && sale.hash) {
+        updateFirestoreSaleStatus(sale.hash, 'Ativa');
+      }
+
+      // Emit socket event for real-time dashboard updates
+      io.emit("sale_updated", { id: Number(saleId), status: 'Ativa' });
+      
+      res.json({ success: true, message: "Status atualizado para Ativa com sucesso." });
+    } catch (e: any) {
+      console.error("Error activating sale via API:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Socket.io logic
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
@@ -326,6 +348,18 @@ async function startServer() {
       }
 
       io.emit("sale_updated", { id: saleId, status: 'Entregue' });
+    });
+
+    socket.on("activate_sale", (saleId) => {
+      db.prepare("UPDATE sales SET status = 'Ativa' WHERE id = ?").run(saleId);
+      
+      // Busca a venda para obter o hash e atualizar no Firestore
+      const sale = db.prepare("SELECT hash FROM sales WHERE id = ?").get(saleId) as any;
+      if (sale && sale.hash) {
+        updateFirestoreSaleStatus(sale.hash, 'Ativa');
+      }
+
+      io.emit("sale_updated", { id: saleId, status: 'Ativa' });
     });
 
     socket.on("update_promo", (status) => {

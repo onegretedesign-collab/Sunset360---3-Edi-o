@@ -35,7 +35,8 @@ import {
   Sparkles,
   PlusCircle,
   Check,
-  X
+  X,
+  Printer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
@@ -79,7 +80,8 @@ const App = () => {
     cpf: '',
     type: 'individual',
     qty: 1,
-    method: 'PIX'
+    method: 'PIX',
+    status: 'Ativa'
   });
   const [manualSaleErrors, setManualSaleErrors] = useState({
     name: '',
@@ -1076,7 +1078,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         total: manualSaleData.qty * currentPrice,
         method: manualSaleData.method,
         date: new Date().toISOString(),
-        status: 'Ativa'
+        status: manualSaleData.status || 'Ativa'
       };
 
       try {
@@ -1095,7 +1097,8 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
             cpf: '',
             type: 'individual',
             qty: 1,
-            method: 'PIX'
+            method: 'PIX',
+            status: 'Ativa'
           });
           setShowManualSaleForm(false);
           
@@ -1153,6 +1156,47 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       }
     );
   };
+
+  const activateSale = (sale: any) => {
+    triggerConfirm(
+      "Confirmar Pagamento",
+      `Confirmar pagamento e ativar o ingresso de ${sale.name}?`,
+      () => {
+        // Sincroniza via REST API de forma confiável
+        fetch(`/api/sales/${sale.id}/activate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        })
+          .then(res => res.json())
+          .then(result => {
+            if (result.success) {
+              setSalesReport(prev => prev.map(s => s.id === sale.id ? { ...s, status: 'Ativa' } : s));
+              triggerToast("Pagamento confirmado e venda ativada com sucesso!", "success");
+              
+              // Executa a notificação via WhatsApp para o cliente
+              const message = `*PAGAMENTO CONFIRMADO* ✅%0A%0AOlá *${sale.name}*!%0A%0AConfirmamos o recebimento do seu pagamento. Seu convite para o *Sunset 360º 3ª Edição* agora está *ATIVO* e liberado! 🌅✨%0A%0AAcesse o site com seu CPF para gerar/imprimir seu comprovante oficial em PDF e retire suas pulseiras em um dos nossos pontos de venda!%0A%0A*DETALHES DO CONVITE:*%0A👤 *Titular:* ${sale.name}%0A🎟️ *Tipo:* ${TICKET_LABELS[sale.type as keyof typeof TICKET_LABELS] || sale.type}%0A🔢 *Quantidade:* ${sale.qty} pacote(s)%0A💰 *Total:* R$ ${sale.total},00%0A%0A📅 *Data do Evento:* 19 de Setembro%0A📍 *Local:* ${EVENT_LOCATION}%0A%0A📸 *Siga-nos:* https://www.instagram.com/sunset360_3edicao`;
+              const waUrl = `https://api.whatsapp.com/send?phone=${sale.whatsapp}&text=${message}`;
+              window.open(waUrl, '_blank');
+            } else {
+              triggerToast("Ocorreu um erro ao ativar a venda.", "error");
+            }
+          })
+          .catch(err => {
+            console.error("Erro ao ativar venda:", err);
+            // Fallback via socket
+            if (socket) {
+              socket.emit('activate_sale', sale.id);
+            }
+            // Sincroniza localmente
+            setSalesReport(prev => prev.map(s => s.id === sale.id ? { ...s, status: 'Ativa' } : s));
+            triggerToast("Venda ativada localmente.", "info");
+          });
+      }
+    );
+  };
+
   const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
   const casadinhoSalesCount = salesReport.filter(sale => sale.type === 'casadinho').reduce((acc, sale) => acc + sale.qty, 0);
   const totalCupsGiven = (individualSalesCount * 1) + (casadinhoSalesCount * 2);
@@ -2012,6 +2056,18 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                             </select>
                           </div>
 
+                          <div className="space-y-1">
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Status Inicial</label>
+                            <select 
+                              value={manualSaleData.status || 'Ativa'}
+                              onChange={(e) => setManualSaleData({ ...manualSaleData, status: e.target.value })}
+                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                            >
+                              <option value="Ativa">Ativa</option>
+                              <option value="Pendente de Pagamento">Pendente de Pagamento</option>
+                            </select>
+                          </div>
+
                           <div className="md:col-span-2 pt-2 flex justify-between items-center">
                             <span className="text-neutral-400 font-bold uppercase tracking-widest text-[10px]">
                               Total: <span className="text-orange-500 font-black text-sm">R$ {manualSaleData.qty * PRICES[manualSaleData.type as keyof typeof PRICES]},00</span>
@@ -2280,8 +2336,8 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                     >
                       <option value="Todos">Todos os Status</option>
                       <option value="Ativa">Ativa</option>
-                      <option value="Pendente">Pendente</option>
-                      <option value="Cancelada">Cancelada</option>
+                      <option value="Entregue">Entregue</option>
+                      <option value="Pendente de Pagamento">Pendente de Pagamento</option>
                     </select>
                   </div>
                 </div>
@@ -2318,10 +2374,29 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                             <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
                             <td className="p-4 text-right text-white font-black">R${sale.total}</td>
                             <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
-                              <span className={`${sale.status === 'Ativa' ? 'text-green-500' : sale.status === 'Entregue' ? 'text-blue-500' : 'text-neutral-500'}`}>{sale.status} {sale.status === 'Entregue' && '✅'}</span>
+                              <span className={`${
+                                sale.status === 'Ativa' 
+                                  ? 'text-green-500' 
+                                  : sale.status === 'Entregue' 
+                                    ? 'text-blue-500' 
+                                    : sale.status === 'Pendente de Pagamento'
+                                      ? 'text-amber-500'
+                                      : 'text-neutral-500'
+                              }`}>
+                                {sale.status} {sale.status === 'Entregue' && '✅'} {sale.status === 'Pendente de Pagamento' && '⏳'}
+                              </span>
                             </td>
                             <td className="p-4 text-right flex justify-end gap-2">
-                              {sale.status !== 'Entregue' && (
+                              {sale.status === 'Pendente de Pagamento' && (
+                                <button 
+                                  onClick={() => activateSale(sale)} 
+                                  className="p-2 text-amber-500 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
+                                  title="Confirmar Pagamento / Ativar Venda"
+                                >
+                                  <CheckCircle2 size={14} />
+                                </button>
+                              )}
+                              {sale.status === 'Ativa' && (
                                 <button 
                                   onClick={() => confirmDelivery(sale)} 
                                   className="p-2 text-neutral-700 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
@@ -2409,12 +2484,21 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                 Apresente este QR Code em um dos pontos de retirada para receber sua pulseira e copos.
               </div>
               
-              <button 
-                onClick={() => { window.history.pushState({}, '', '/'); setView('home'); setViewedTicket(null); }}
-                className="w-full bg-neutral-900 border border-neutral-800 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm transition-all active:scale-95 italic"
-              >
-                VOLTAR AO INÍCIO
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 w-full">
+                <button 
+                  onClick={() => generateTicketPDF(viewedTicket)}
+                  className="flex-1 bg-orange-500 hover:bg-orange-600 text-black font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm transition-all active:scale-95 flex items-center justify-center gap-2 italic cursor-pointer"
+                >
+                  <Printer size={18} />
+                  <span>Imprimir Ingresso</span>
+                </button>
+                <button 
+                  onClick={() => { window.history.pushState({}, '', '/'); setView('home'); setViewedTicket(null); }}
+                  className="flex-1 bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm transition-all active:scale-95 italic cursor-pointer"
+                >
+                  VOLTAR AO INÍCIO
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
