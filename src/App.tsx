@@ -639,91 +639,93 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.setFillColor(248, 249, 250);
       doc.rect(0, 0, 105, 148, 'F');
 
-      // Orange header bar
-      doc.setFillColor(249, 115, 22);
-      doc.rect(0, 0, 105, 15, 'F');
-
-      // Header title
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.text('SUNSET 360º - 3ª EDIÇÃO', 52.5, 9.5, { align: 'center' });
+      // Add logo image at the top
+      const logoImg = document.getElementById('pdf-logo-img') as HTMLImageElement | null;
+      if (logoImg && logoImg.complete && logoImg.naturalWidth !== 0) {
+        doc.addImage(logoImg, 'JPEG', 27.5, 8, 50, 25);
+      } else {
+        // Fallback text if logo hasn't preloaded
+        doc.setFillColor(249, 115, 22);
+        doc.rect(0, 0, 105, 15, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.text('SUNSET 360º - 3ª EDIÇÃO', 52.5, 9.5, { align: 'center' });
+      }
 
       // Ticket category label
       doc.setTextColor(26, 26, 26);
+      doc.setFont('Helvetica', 'bold');
       doc.setFontSize(12);
       const label = TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS] || ticket.type;
-      doc.text(label.toUpperCase(), 52.5, 25, { align: 'center' });
+      doc.text(label.toUpperCase(), 52.5, 42, { align: 'center' });
 
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(115, 115, 115);
-      doc.text(`ID DO CONVITE: #${ticket.id.toString().slice(-8).toUpperCase()}`, 52.5, 30, { align: 'center' });
+      doc.text(`ID DO CONVITE: #${ticket.id.toString().slice(-8).toUpperCase()}`, 52.5, 47, { align: 'center' });
 
       // Divider line
       doc.setDrawColor(229, 229, 229);
       doc.setLineWidth(0.5);
-      doc.line(10, 34, 95, 34);
+      doc.line(10, 51, 95, 51);
 
       // Ticket Details
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(115, 115, 115);
-      doc.text('TITULAR:', 15, 42);
+      doc.text('TITULAR:', 15, 59);
       doc.setTextColor(26, 26, 26);
-      doc.text(ticket.name.toUpperCase(), 15, 47);
+      doc.text(ticket.name.toUpperCase(), 15, 64);
 
       doc.setTextColor(115, 115, 115);
-      doc.text('DOCUMENTO (CPF):', 15, 55);
+      doc.text('DOCUMENTO (CPF):', 15, 72);
       doc.setTextColor(26, 26, 26);
       const formattedCpf = ticket.cpf ? formatCPF(ticket.cpf) : 'NÃO INFORMADO';
-      doc.text(formattedCpf, 15, 60);
+      doc.text(formattedCpf, 15, 77);
 
       doc.setTextColor(115, 115, 115);
-      doc.text('QUANTIDADE:', 65, 42);
+      doc.text('QUANTIDADE:', 65, 59);
       doc.setTextColor(26, 26, 26);
-      doc.text(`${ticket.qty} Pacote(s)`, 65, 47);
+      doc.text(`${ticket.qty} Pacote(s)`, 65, 64);
 
       doc.setTextColor(115, 115, 115);
-      doc.text('PULSEIRAS:', 65, 55);
+      doc.text('PULSEIRAS:', 65, 72);
       doc.setTextColor(249, 115, 22);
       const pulseirasText = `${ticket.qty * (ticket.type === 'individual' ? 1 : 2)} Unidade(s)`;
-      doc.text(pulseirasText, 65, 60);
+      doc.text(pulseirasText, 65, 77);
+
+      // Cups calculation & detail
+      const cupsQty = ticket.qty * (ticket.type === 'individual' ? 1 : 2);
+      const ticketTypeLabel = ticket.type === 'individual' ? 'Individual' : 'Casadinho';
+      const cupsText = `${cupsQty} Copo(s) (${ticket.qty}x ${ticketTypeLabel})`;
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('COPOS GARANTIDOS:', 15, 85);
+      doc.setTextColor(26, 26, 26);
+      doc.text(cupsText, 15, 90);
 
       // Divider line
       doc.setDrawColor(229, 229, 229);
-      doc.line(10, 67, 95, 67);
+      doc.line(10, 96, 95, 96);
 
-      // Try to find the rendered Canvas with QR code
-      const canvas = document.getElementById(`qr-canvas-${ticket.id}`) as HTMLCanvasElement | null;
-      if (canvas) {
-        try {
-          const qrDataUrl = canvas.toDataURL('image/png');
-          doc.addImage(qrDataUrl, 'PNG', 37.5, 71, 30, 30);
-        } catch (canvasErr) {
-          console.error("Erro ao converter QR Code do Canvas para Imagem:", canvasErr);
-        }
-      } else {
-        console.warn(`Canvas qr-canvas-${ticket.id} não encontrado.`);
-      }
-
-      // Instruction text
-      doc.setFont('Helvetica', 'normal');
-      doc.setFontSize(7);
-      doc.setTextColor(115, 115, 115);
-      doc.text('APRESENTE ESTE COMPROVANTE COM SEU DOCUMENTO DE IDENTIFICAÇÃO', 52.5, 115, { align: 'center' });
-      doc.text('NA PORTARIA DO EVENTO PARA RETIRADA DE SEUS ITENS.', 52.5, 119, { align: 'center' });
+      // Footer instruction text (as requested by user)
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(26, 26, 26);
+      doc.text('APRESENTE ESSE COMPROVANTE NA HORA DE RETIRAR', 52.5, 105, { align: 'center' });
+      doc.text('SUA PULSEIRA NO PONTO DE VENDA.', 52.5, 110, { align: 'center' });
 
       // Decorative dash line
       doc.setDrawColor(200, 200, 200);
       doc.setLineDashPattern([2, 2], 0);
-      doc.line(0, 128, 105, 128);
+      doc.line(0, 120, 105, 120);
 
       // Website footer
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(249, 115, 22);
-      doc.text('www.sunset360.com.br', 52.5, 137, { align: 'center' });
+      doc.text('www.sunset360.com.br', 52.5, 130, { align: 'center' });
 
       // Download file
       doc.save(`ingresso-sunset360-${ticket.id.toString().slice(-6)}.pdf`);
@@ -1263,7 +1265,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
               <div className="px-1">
                 <div className="rounded-3xl overflow-hidden border border-neutral-800 bg-black shadow-2xl">
                   <img 
-                    src="https://i.postimg.cc/rw6RvrjJ/ARTE-SUNSET-STORY-SO-GPN.jpg" 
+                    src="https://i.postimg.cc/FzrD9CDv/Whats-App-Image-2026-06-26-at-21-23-57.jpg" 
                     alt="Arte Sunset Story" 
                     className="w-full h-auto block"
                     referrerPolicy="no-referrer"
@@ -2395,6 +2397,14 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
           </motion.div>
         )}
       </AnimatePresence>
+      <img 
+        id="pdf-logo-img" 
+        src="https://i.postimg.cc/3NTF6mYn/LOGO-EVENTO-SUNSET-360-3-EDICAO.jpg" 
+        alt="Logo PDF" 
+        style={{ display: 'none' }} 
+        crossOrigin="anonymous"
+        referrerPolicy="no-referrer"
+      />
     </div>
   );
 };
