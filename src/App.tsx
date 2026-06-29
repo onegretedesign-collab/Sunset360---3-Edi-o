@@ -725,9 +725,19 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.setTextColor(26, 26, 26);
       doc.text(cupsText, 15, detailsValue3Y);
 
+      // Security Anti-counterfeit Purchase Timestamp (Highly Visible Security Info)
+      const detailsRow4Y = detailsValue3Y + 8;
+      const detailsValue4Y = detailsRow4Y + 5;
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('AUTENTICAÇÃO DE COMPRA (DATA/HORA):', 15, detailsRow4Y);
+      doc.setTextColor(249, 115, 22);
+      const purchaseTimeStr = formatPurchaseDateTime(ticket);
+      doc.text(purchaseTimeStr, 15, detailsValue4Y);
+
       // Divider line 2
       doc.setDrawColor(229, 229, 229);
-      const divider2Y = detailsValue3Y + 6;
+      const divider2Y = detailsValue4Y + 6;
       doc.line(10, divider2Y, 95, divider2Y);
 
       // Footer instruction text (as requested by user)
@@ -801,6 +811,58 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
     if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+  };
+
+  const formatPurchaseDateTime = (ticket: any) => {
+    try {
+      if (!ticket) return "NÃO INFORMADO";
+      
+      // 1. Check if ticket.id is a 13-digit timestamp (e.g. Date.now())
+      const numericId = Number(ticket.id);
+      if (!isNaN(numericId) && numericId > 1000000000000 && numericId < 9999999999999) {
+        const dateFromId = new Date(numericId);
+        return dateFromId.toLocaleString('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+      }
+      
+      const dateStr = ticket.date;
+      if (!dateStr) return "NÃO INFORMADO";
+      
+      if (dateStr.includes('/') && dateStr.includes(':')) {
+        return dateStr;
+      }
+      
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) {
+        return dateStr;
+      }
+      
+      if (dateStr.length === 10) {
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+          return `${parts[2]}/${parts[1]}/${parts[0]} (AUTENTICADO)`;
+        }
+      }
+      
+      return date.toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    } catch (e) {
+      return ticket?.date || "NÃO INFORMADO";
+    }
   };
 
   const getDeadlineStatus = () => {
@@ -910,7 +972,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
       total: ticketsCount * currentPrice,
       method: method === 'pix' ? 'PIX' : 'Retirada',
-      date: new Date().toISOString().split('T')[0],
+      date: new Date().toISOString(),
       status: 'Ativa'
     };
     
@@ -1000,7 +1062,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         wristbands: (manualSaleData.type === 'individual' ? 1 : 2) * manualSaleData.qty,
         total: manualSaleData.qty * currentPrice,
         method: manualSaleData.method,
-        date: new Date().toISOString().split('T')[0],
+        date: new Date().toISOString(),
         status: 'Ativa'
       };
 
@@ -2235,7 +2297,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                       <tbody className="divide-y divide-neutral-800 font-bold italic">
                         {getSortedSales(salesReport).map((sale) => (
                           <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
-                            <td className="p-4 text-neutral-400 whitespace-nowrap">{sale.date}</td>
+                            <td className="p-4 text-neutral-400 whitespace-nowrap text-xs font-mono">{formatPurchaseDateTime(sale)}</td>
                             <td className="p-4 font-black text-white italic truncate max-w-[100px] leading-none">
                               <div>{sale.name}</div>
                               {sale.cpf && <div className="text-[7.5px] text-neutral-500 font-mono mt-1 font-normal tracking-normal">{formatCPF(sale.cpf)}</div>}
