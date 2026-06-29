@@ -38,7 +38,8 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { QRCodeSVG } from 'qrcode.react';
+import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
+import { jsPDF } from 'jspdf';
 import { 
   BarChart, 
   Bar, 
@@ -623,6 +624,113 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       });
     } catch (error) {
       console.error('Error sharing:', error);
+    }
+  };
+
+  const generateTicketPDF = (ticket: any) => {
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a6',
+      });
+
+      // Soft off-white background
+      doc.setFillColor(248, 249, 250);
+      doc.rect(0, 0, 105, 148, 'F');
+
+      // Orange header bar
+      doc.setFillColor(249, 115, 22);
+      doc.rect(0, 0, 105, 15, 'F');
+
+      // Header title
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('SUNSET 360º - 3ª EDIÇÃO', 52.5, 9.5, { align: 'center' });
+
+      // Ticket category label
+      doc.setTextColor(26, 26, 26);
+      doc.setFontSize(12);
+      const label = TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS] || ticket.type;
+      doc.text(label.toUpperCase(), 52.5, 25, { align: 'center' });
+
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(115, 115, 115);
+      doc.text(`ID DO CONVITE: #${ticket.id.toString().slice(-8).toUpperCase()}`, 52.5, 30, { align: 'center' });
+
+      // Divider line
+      doc.setDrawColor(229, 229, 229);
+      doc.setLineWidth(0.5);
+      doc.line(10, 34, 95, 34);
+
+      // Ticket Details
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(115, 115, 115);
+      doc.text('TITULAR:', 15, 42);
+      doc.setTextColor(26, 26, 26);
+      doc.text(ticket.name.toUpperCase(), 15, 47);
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('DOCUMENTO (CPF):', 15, 55);
+      doc.setTextColor(26, 26, 26);
+      const formattedCpf = ticket.cpf ? formatCPF(ticket.cpf) : 'NÃO INFORMADO';
+      doc.text(formattedCpf, 15, 60);
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('QUANTIDADE:', 65, 42);
+      doc.setTextColor(26, 26, 26);
+      doc.text(`${ticket.qty} Pacote(s)`, 65, 47);
+
+      doc.setTextColor(115, 115, 115);
+      doc.text('PULSEIRAS:', 65, 55);
+      doc.setTextColor(249, 115, 22);
+      const pulseirasText = `${ticket.qty * (ticket.type === 'individual' ? 1 : 2)} Unidade(s)`;
+      doc.text(pulseirasText, 65, 60);
+
+      // Divider line
+      doc.setDrawColor(229, 229, 229);
+      doc.line(10, 67, 95, 67);
+
+      // Try to find the rendered Canvas with QR code
+      const canvas = document.getElementById(`qr-canvas-${ticket.id}`) as HTMLCanvasElement | null;
+      if (canvas) {
+        try {
+          const qrDataUrl = canvas.toDataURL('image/png');
+          doc.addImage(qrDataUrl, 'PNG', 37.5, 71, 30, 30);
+        } catch (canvasErr) {
+          console.error("Erro ao converter QR Code do Canvas para Imagem:", canvasErr);
+        }
+      } else {
+        console.warn(`Canvas qr-canvas-${ticket.id} não encontrado.`);
+      }
+
+      // Instruction text
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(115, 115, 115);
+      doc.text('APRESENTE ESTE COMPROVANTE COM SEU DOCUMENTO DE IDENTIFICAÇÃO', 52.5, 115, { align: 'center' });
+      doc.text('NA PORTARIA DO EVENTO PARA RETIRADA DE SEUS ITENS.', 52.5, 119, { align: 'center' });
+
+      // Decorative dash line
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineDashPattern([2, 2], 0);
+      doc.line(0, 128, 105, 128);
+
+      // Website footer
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(249, 115, 22);
+      doc.text('www.sunset360.com.br', 52.5, 137, { align: 'center' });
+
+      // Download file
+      doc.save(`ingresso-sunset360-${ticket.id.toString().slice(-6)}.pdf`);
+      triggerToast("PDF gerado com sucesso!", "success");
+    } catch (err: any) {
+      console.error("Erro ao gerar PDF:", err);
+      triggerToast("Erro ao gerar o PDF do ingresso.", "error");
     }
   };
 
@@ -1546,6 +1654,27 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                                       )}
                                     </div>
                                     <div><span className="text-[9px] text-neutral-500 uppercase font-black block mb-0.5 tracking-widest">Bilhetes</span><span className="text-xs text-white font-black leading-none">{ticket.qty} Unidade(s)</span></div>
+                                </div>
+
+                                <div className="border-t border-neutral-800/60 pt-3 flex flex-col gap-2">
+                                  {/* Canvas oculto para extração de imagem no PDF */}
+                                  <div style={{ display: "none" }}>
+                                    <QRCodeCanvas
+                                      id={`qr-canvas-${ticket.id}`}
+                                      value={`${OFFICIAL_URL}?ticket=${ticket.hash}`}
+                                      size={256}
+                                      level="H"
+                                      includeMargin={true}
+                                    />
+                                  </div>
+                                  
+                                  <button
+                                    onClick={() => generateTicketPDF(ticket)}
+                                    className="w-full bg-neutral-950 border border-neutral-800 hover:border-orange-500 text-neutral-300 hover:text-white font-black py-2.5 rounded-xl text-[10px] tracking-widest uppercase flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                                  >
+                                    <Download size={14} className="text-orange-500" />
+                                    <span>Baixar Ingresso PDF</span>
+                                  </button>
                                 </div>
                             </div>
                         </div>
