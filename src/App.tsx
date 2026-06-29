@@ -632,21 +632,21 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       const doc = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
-        format: 'a6',
+        format: [105, 187],
       });
 
       // Soft off-white background
       doc.setFillColor(248, 249, 250);
-      doc.rect(0, 0, 105, 148, 'F');
+      doc.rect(0, 0, 105, 187, 'F');
 
       // Add logo image at the top
       const logoImg = document.getElementById('pdf-logo-img') as HTMLImageElement | null;
       let headerBottom = 15; // default starting Y coordinate if logo is not loaded
       if (logoImg && logoImg.complete && logoImg.naturalWidth !== 0) {
-        const targetWidth = 50; // mm
+        const targetWidth = 55; // mm
         const targetHeight = (targetWidth * logoImg.naturalHeight) / logoImg.naturalWidth;
         const xPos = (105 - targetWidth) / 2; // center it horizontally
-        const yPos = 8; // top margin
+        const yPos = 12; // top margin
         doc.addImage(logoImg, 'PNG', xPos, yPos, targetWidth, targetHeight);
         headerBottom = yPos + targetHeight;
       } else {
@@ -665,7 +665,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(12);
       const label = TICKET_LABELS[ticket.type as keyof typeof TICKET_LABELS] || ticket.type;
-      const categoryY = headerBottom + 10;
+      const categoryY = headerBottom + 12;
       doc.text(label.toUpperCase(), 52.5, categoryY, { align: 'center' });
 
       doc.setFont('Helvetica', 'normal');
@@ -677,14 +677,14 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       // Divider line
       doc.setDrawColor(229, 229, 229);
       doc.setLineWidth(0.5);
-      const divider1Y = idY + 4;
+      const divider1Y = idY + 5;
       doc.line(10, divider1Y, 95, divider1Y);
 
       // Ticket Details
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(8.5);
       
-      const detailsRow1Y = divider1Y + 8;
+      const detailsRow1Y = divider1Y + 10;
       const detailsValue1Y = detailsRow1Y + 5;
       
       doc.setTextColor(115, 115, 115);
@@ -697,7 +697,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.setTextColor(26, 26, 26);
       doc.text(`${ticket.qty} Pacote(s)`, 65, detailsValue1Y);
 
-      const detailsRow2Y = detailsValue1Y + 8;
+      const detailsRow2Y = detailsValue1Y + 10;
       const detailsValue2Y = detailsRow2Y + 5;
 
       doc.setTextColor(115, 115, 115);
@@ -717,7 +717,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       const ticketTypeLabel = ticket.type === 'individual' ? 'Individual' : 'Casadinho';
       const cupsText = `${cupsQty} Copo(s) (${ticket.qty}x ${ticketTypeLabel})`;
 
-      const detailsRow3Y = detailsValue2Y + 8;
+      const detailsRow3Y = detailsValue2Y + 10;
       const detailsValue3Y = detailsRow3Y + 5;
 
       doc.setTextColor(115, 115, 115);
@@ -726,7 +726,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       doc.text(cupsText, 15, detailsValue3Y);
 
       // Security Anti-counterfeit Purchase Timestamp (Highly Visible Security Info)
-      const detailsRow4Y = detailsValue3Y + 8;
+      const detailsRow4Y = detailsValue3Y + 10;
       const detailsValue4Y = detailsRow4Y + 5;
 
       doc.setTextColor(115, 115, 115);
@@ -737,7 +737,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
       // Divider line 2
       doc.setDrawColor(229, 229, 229);
-      const divider2Y = detailsValue4Y + 6;
+      const divider2Y = detailsValue4Y + 8;
       doc.line(10, divider2Y, 95, divider2Y);
 
       // Footer instruction text (as requested by user)
@@ -752,7 +752,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       // Decorative dash line
       doc.setDrawColor(200, 200, 200);
       doc.setLineDashPattern([2, 2], 0);
-      const dashY = instruct2Y + 10;
+      const dashY = instruct2Y + 12;
       doc.line(0, dashY, 105, dashY);
 
       // Website footer
