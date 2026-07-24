@@ -55,7 +55,7 @@ import { auth } from './firebase';
 
 const App = () => {
   // Estados principais
-  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, ticket_view
+  const [view, setView] = useState('home'); // home, buy, payment, success, my_tickets, admin, admin_history, ticket_view, stripe_pending
   const [ticketType, setTicketType] = useState('individual'); // individual ou casadinho
   const [ticketsCount, setTicketsCount] = useState(1);
   const [userData, setUserData] = useState({ name: '', whatsapp: '', cpf: '' });
@@ -71,6 +71,11 @@ const App = () => {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
+  
+  // Estados para Stripe
+  const [stripeCheckoutUrl, setStripeCheckoutUrl] = useState('');
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [selectedStripeMethod, setSelectedStripeMethod] = useState('pix'); // pix, credit_card, debit_card
 
   // Estados para Registro de Venda Manual pelo Admin
   const [showManualSaleForm, setShowManualSaleForm] = useState(false);
@@ -103,6 +108,43 @@ const App = () => {
     confirmLabel?: string;
     type?: 'danger' | 'info';
   }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
+  // Push Notifications State & Helper Functions
+  const [pushPermission, setPushPermission] = useState<NotificationPermission>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
+
+  const sendPushNotification = (title: string, body: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          body,
+          icon: '/favicon.ico'
+        });
+      } catch (err) {
+        console.error("Erro ao enviar notificação push:", err);
+      }
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if ('Notification' in window) {
+      try {
+        const permission = await Notification.requestPermission();
+        setPushPermission(permission);
+        if (permission === 'granted') {
+          triggerToast("Notificações Push ativadas com sucesso! 🎉", "success");
+          sendPushNotification("Sunset 360º", "Você receberá alertas sobre a confirmação da sua compra!");
+        } else if (permission === 'denied') {
+          triggerToast("Permissão de notificação negada no seu navegador.", "info");
+        }
+      } catch (err) {
+        console.error("Erro ao solicitar permissão de notificação:", err);
+      }
+    } else {
+      triggerToast("Seu navegador não suporta Notificações Push.", "info");
+    }
+  };
 
   const triggerToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setCustomToast({ show: true, message, type });
@@ -446,10 +488,39 @@ const App = () => {
 
     newSocket.on('sale_updated', (updatedData) => {
       setSalesReport(prev => prev.map(s => s.id === updatedData.id ? { ...s, ...updatedData } : s));
+      
+      // Se a venda pendente foi ativada em tempo real (Stripe confirmou), vai para sucesso
+      if (updatedData.status === 'Ativa') {
+        sendPushNotification(
+          "🎉 Compra Confirmada - Sunset 360º",
+          `Seu ingresso (${updatedData.name || 'Cliente'}) foi ativado com sucesso! Acesse "Meus Convites" para visualizar.`
+        );
+        playNotificationSound();
+        triggerToast("Seu ingresso foi confirmado com sucesso! 🎉", "success");
+
+        setMyTickets(prev => {
+          const matchingTicket = prev.find(t => t.hash === updatedData.hash || t.id === updatedData.id);
+          if (matchingTicket) {
+            setView(currentView => currentView === 'stripe_pending' ? 'success' : currentView);
+            return prev.map(t => (t.hash === updatedData.hash || t.id === updatedData.id) ? { ...t, status: 'Ativa' } : t);
+          }
+          return prev;
+        });
+      } else if (updatedData.status) {
+        sendPushNotification(
+          "Atualização no Pedido - Sunset 360º",
+          `O status do seu pedido foi alterado para: ${updatedData.status}`
+        );
+      }
     });
 
     newSocket.on('sale_confirmed', (confirmedSale) => {
       setCurrentSaleHash(confirmedSale.hash);
+      sendPushNotification(
+        "✅ Pagamento Recebido!",
+        `Sua compra para o Sunset 360º foi confirmada!`
+      );
+      playNotificationSound();
     });
 
     // Handle URL Ticket View
@@ -473,6 +544,52 @@ const App = () => {
       socket.emit('update_promo', promoEnded);
     }
   }, [promoEnded]);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment_status');
+    const hash = urlParams.get('hash');
+    
+    if (paymentStatus === 'success' && hash) {
+      // Pagamento bem sucedido via Stripe
+      fetch(`/api/sales/hash/${hash}`)
+        .then(res => res.json())
+        .then(sale => {
+          if (sale && sale.status === 'Ativa') {
+            setMyTickets(prev => {
+              const exists = prev.some(t => t.hash === hash);
+              if (exists) {
+                return prev.map(t => t.hash === hash ? sale : t);
+              } else {
+                return [...prev, sale];
+              }
+            });
+            
+            setUserData({
+              name: sale.name,
+              whatsapp: sale.whatsapp,
+              cpf: sale.cpf
+            });
+            setTicketsCount(sale.qty);
+            setTicketType(sale.type);
+            setPaymentMethod('Stripe');
+            setCurrentSaleHash(hash);
+            setView('success');
+            triggerToast("Pagamento confirmado via Stripe! 🎉", "success");
+          }
+        })
+        .catch(err => console.error("Erro ao carregar venda pós-pagamento:", err));
+        
+      // Limpa os parâmetros da URL
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    } else if (paymentStatus === 'cancel') {
+      triggerToast("Pagamento cancelado no Stripe.", "info");
+      setView('home');
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, []);
 
   const currentPrice = PRICES[ticketType as keyof typeof PRICES];
 
@@ -931,13 +1048,12 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       isValid = false;
     }
 
-    // Validação do CPF
-    if (!userData.cpf) {
-      newErrors.cpf = 'O CPF é obrigatório.';
-      isValid = false;
-    } else if (!validateCPF(userData.cpf)) {
-      newErrors.cpf = 'Informe um CPF válido e bem formatado.';
-      isValid = false;
+    // Validação do CPF (Opcional - valida apenas se preenchido)
+    if (userData.cpf && userData.cpf.trim() !== '') {
+      if (!validateCPF(userData.cpf)) {
+        newErrors.cpf = 'Informe um CPF válido e bem formatado.';
+        isValid = false;
+      }
     }
 
     setErrors(newErrors);
@@ -969,6 +1085,86 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     const formatted = formatCPF(e.target.value);
     setUserData({ ...userData, cpf: formatted });
     if (errors.cpf) setErrors({ ...errors, cpf: '' });
+  };
+
+  const handleStripeCheckout = async () => {
+    try {
+      setIsCreatingSession(true);
+      const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      setCurrentSaleHash(generatedHash);
+
+      const response = await fetch('/api/checkout/create-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: userData.name,
+          whatsapp: userData.whatsapp.replace(/\D/g, ''),
+          cpf: userData.cpf.replace(/\D/g, ''),
+          type: ticketType,
+          qty: ticketsCount,
+          hash: generatedHash,
+        }),
+      });
+
+      const result = await response.json();
+      if (result && result.url) {
+        setStripeCheckoutUrl(result.url);
+        
+        // Adicionar localmente como Pendente
+        const tempTicket = {
+          id: Date.now(),
+          hash: generatedHash,
+          name: userData.name,
+          whatsapp: userData.whatsapp.replace(/\D/g, ''),
+          cpf: userData.cpf.replace(/\D/g, ''),
+          type: ticketType,
+          qty: ticketsCount,
+          cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
+          wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
+          total: ticketsCount * currentPrice,
+          method: 'Stripe',
+          date: new Date().toISOString(),
+          status: 'Pendente de Pagamento'
+        };
+        setMyTickets(prev => [...prev, tempTicket]);
+
+        // Abre em nova aba
+        window.open(result.url, '_blank');
+        
+        // Vai para a tela de aguardando pagamento
+        setView('stripe_pending');
+      } else {
+        triggerToast(result.error || "Erro ao gerar sessão de pagamento Stripe.", "error");
+      }
+    } catch (err: any) {
+      console.error("Erro no checkout do Stripe:", err);
+      triggerToast("Erro de conexão ao tentar iniciar o pagamento.", "error");
+    } finally {
+      setIsCreatingSession(false);
+    }
+  };
+
+  const verifyStripePaymentStatus = () => {
+    if (!currentSaleHash) return;
+    
+    fetch(`/api/sales/hash/${currentSaleHash}`)
+      .then(res => res.json())
+      .then(sale => {
+        if (sale && sale.status === 'Ativa') {
+          // Atualiza localmente e vai para sucesso
+          setMyTickets(prev => prev.map(t => t.hash === currentSaleHash ? sale : t));
+          setView('success');
+          triggerToast("Seu pagamento foi confirmado com sucesso! 🎉", "success");
+        } else {
+          triggerToast("Seu pagamento ainda consta como pendente. Conclua no Stripe ou tente em instantes.", "info");
+        }
+      })
+      .catch(err => {
+        console.error(err);
+        triggerToast("Erro ao verificar status no servidor.", "error");
+      });
   };
 
   const confirmPayment = (method: string) => {
@@ -1056,12 +1252,11 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       isValid = false;
     }
 
-    if (!manualSaleData.cpf) {
-      newErrors.cpf = 'O CPF é obrigatório.';
-      isValid = false;
-    } else if (!validateCPF(manualSaleData.cpf)) {
-      newErrors.cpf = 'Informe um CPF válido e bem formatado.';
-      isValid = false;
+    if (manualSaleData.cpf && manualSaleData.cpf.trim() !== '') {
+      if (!validateCPF(manualSaleData.cpf)) {
+        newErrors.cpf = 'Informe um CPF válido e bem formatado.';
+        isValid = false;
+      }
     }
 
     setManualSaleErrors(newErrors);
@@ -1573,7 +1768,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                           type="tel" value={userData.cpf}
                           onChange={handleCPFChange}
                           className={`w-full bg-neutral-950 border ${errors.cpf ? 'border-red-500' : 'border-neutral-800'} rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic`}
-                          placeholder="CPF (Ex: 000.000.000-00)"
+                          placeholder="CPF (Opcional - Ex: 000.000.000-00)"
                         />
                         {errors.cpf && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.cpf}</p>}
                       </div>
@@ -1601,7 +1796,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
             </motion.div>
           )}
 
-          {/* TELA DE PAGAMENTO (PIX) */}
+          {/* TELA DE SELEÇÃO DE MEIO DE PAGAMENTO */}
           {view === 'payment' && (
             <motion.div 
               key="payment"
@@ -1610,30 +1805,162 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
               exit={{ opacity: 0, x: -50 }}
               className="space-y-6 italic font-bold"
             >
-              <h2 className="text-2xl font-bold uppercase italic tracking-tighter text-white font-black leading-tight">PAGAMENTO PIX</h2>
-              <div className="space-y-4">
-                <div className="bg-neutral-900 p-6 rounded-2xl border-2 border-orange-500 shadow-2xl shadow-orange-500/10 text-center">
-                      <div className="bg-orange-500/10 p-3 rounded-full w-fit mx-auto mb-4 shadow-inner">
-                          <Smartphone size={32} className="text-orange-500" />
+              <div className="flex items-center gap-2">
+                <button onClick={() => setView('buy')} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={18} /></button>
+                <h2 className="text-2xl font-bold uppercase italic tracking-tighter text-white font-black leading-tight">MÉTODO DE PAGAMENTO</h2>
+              </div>
+
+              <div className="space-y-4 text-left">
+                <p className="text-[10px] text-neutral-500 font-black uppercase tracking-widest leading-none px-1">Selecione o meio de pagamento:</p>
+                
+                <div className="grid grid-cols-1 gap-3 font-black">
+                  {[
+                    { id: 'pix', label: 'Pix (Confirmação Imediata)', desc: 'Chave copia e cola ou QR Code', icon: <QrCode size={20} className="text-orange-500" /> },
+                    { id: 'credit_card', label: 'Cartão de Crédito', desc: 'Processamento instantâneo via Stripe', icon: <DollarSign size={20} className="text-orange-500" /> },
+                    { id: 'debit_card', label: 'Cartão de Débito', desc: 'Débito em conta seguro', icon: <Smartphone size={20} className="text-orange-500" /> },
+                  ].map((method) => (
+                    <button
+                      key={method.id}
+                      onClick={() => setSelectedStripeMethod(method.id)}
+                      className={`p-4 rounded-2xl border text-left flex items-start gap-3 transition-all relative cursor-pointer ${
+                        selectedStripeMethod === method.id 
+                          ? 'bg-neutral-900 border-orange-500 shadow-xl shadow-orange-500/5' 
+                          : 'bg-neutral-900/60 border-neutral-800 hover:border-neutral-700'
+                      }`}
+                    >
+                      <div className="p-2 bg-neutral-950 rounded-xl shrink-0">
+                        {method.icon}
                       </div>
-                      <h3 className="font-bold text-white uppercase tracking-tight font-black mb-1 leading-none italic">PIX COPIA E COLA</h3>
-                      <p className="text-[10px] text-neutral-500 uppercase font-black tracking-widest mb-4 italic leading-none">Chave CNPJ do organizador</p>
-                      <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 space-y-4 font-bold">
-                          <span className="text-orange-500 font-mono text-lg font-black block truncate italic">{PIX_KEY}</span>
-                          <button onClick={copyToClipboard} className={`w-full py-4 rounded-lg flex items-center justify-center gap-2 font-black uppercase text-xs transition-all ${copied ? 'bg-green-600 text-white shadow-green-900/20' : 'bg-neutral-800 text-white hover:bg-neutral-700 active:scale-95 shadow-lg'}`}>
-                              {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                              {copied ? 'CHAVE COPIADA!' : 'COPIAR CHAVE PIX'}
-                          </button>
+                      <div className="space-y-0.5">
+                        <h4 className="text-xs font-black text-white italic uppercase tracking-tighter leading-tight">{method.label}</h4>
+                        <p className="text-[9px] text-neutral-500 font-bold uppercase tracking-tight leading-tight">{method.desc}</p>
                       </div>
+                      {selectedStripeMethod === method.id && (
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
+                          <Check size={10} className="text-black font-black" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
                 </div>
-                <div className="bg-neutral-900/50 border border-neutral-800 p-4 rounded-2xl text-center">
-                   <p className="text-[10px] text-neutral-500 font-bold leading-relaxed">
-                     Realize o pagamento e finalize o pedido. <br/>
-                     <span className="text-orange-500 uppercase font-black">O comprovante será enviado na conversa do WhatsApp.</span>
-                   </p>
+
+                <div className="bg-neutral-900 p-5 rounded-2xl border border-neutral-800 space-y-4">
+                  <div className="flex justify-between items-center text-xs uppercase font-black italic tracking-tighter">
+                    <span className="text-neutral-500">Valor total a pagar:</span>
+                    <span className="text-xl text-orange-500 font-black">R$ {ticketsCount * currentPrice},00</span>
+                  </div>
+                  
+                  <div className="pt-3 border-t border-neutral-800 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-orange-500" />
+                    <span className="text-[9px] text-neutral-500 uppercase font-black leading-none">Pagamento seguro processado pela </span>
+                    <span className="text-[9px] text-white font-black italic uppercase leading-none">STRIPE</span>
+                  </div>
                 </div>
-                <button onClick={() => confirmPayment('pix')} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-5 rounded-xl flex items-center justify-center gap-2 transition-all uppercase tracking-widest shadow-lg italic shadow-orange-600/20 active:scale-95">
-                  FINALIZAR PEDIDO
+
+                <button 
+                  onClick={handleStripeCheckout} 
+                  disabled={isCreatingSession}
+                  className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-800 text-white font-black py-5 rounded-xl flex items-center justify-center gap-2 transition-all uppercase tracking-widest shadow-lg italic shadow-orange-600/20 active:scale-95 text-xs cursor-pointer"
+                >
+                  {isCreatingSession ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>GERANDO SESSÃO DE PAGAMENTO...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>IR PARA PAGAMENTO SEGURO</span>
+                      <ChevronRight size={16} />
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* TELA DE AGUARDANDO PAGAMENTO STRIPE */}
+          {view === 'stripe_pending' && (
+            <motion.div 
+              key="stripe_pending"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="text-center py-6 space-y-6 italic font-bold"
+            >
+              <div className="flex justify-center">
+                <div className="w-20 h-20 bg-orange-500/10 rounded-full flex items-center justify-center border-2 border-orange-500 animate-pulse">
+                  <Clock size={36} className="text-orange-500 animate-spin" style={{ animationDuration: '4s' }} />
+                </div>
+              </div>
+              <div className="px-4 text-center">
+                <h2 className="text-2xl font-black mb-1 uppercase tracking-tighter text-white">AGUARDANDO PAGAMENTO</h2>
+                <p className="text-neutral-400 text-xs font-bold leading-relaxed">
+                  Abrimos uma nova janela de pagamento seguro da Stripe. <br/>
+                  Escolha Pix, Cartão de Crédito ou Débito para finalizar.
+                </p>
+              </div>
+
+              <div className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl text-left space-y-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="text-orange-500 shrink-0 mt-0.5" size={18} />
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-white font-black uppercase tracking-tight leading-none mb-1">O que fazer agora?</p>
+                    <p className="text-[10px] text-neutral-400 font-bold leading-normal">
+                      1. Conclua o pagamento na aba aberta do Stripe.<br/>
+                      2. Nosso sistema detectará o pagamento <span className="text-orange-500 font-black">automaticamente em tempo real</span>.<br/>
+                      3. Se a aba não abriu, clique no botão laranja abaixo.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* BANNER PARA ATIVAR NOTIFICAÇÕES PUSH */}
+              <div className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl text-left flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-xl shrink-0 ${pushPermission === 'granted' ? 'bg-green-500/10 text-green-500' : 'bg-orange-500/10 text-orange-500'}`}>
+                    <Bell size={20} />
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-white font-black uppercase tracking-tight leading-tight">
+                      {pushPermission === 'granted' ? 'Notificações Ativas' : 'Notificações Push'}
+                    </p>
+                    <p className="text-[9px] text-neutral-400 font-bold leading-tight">
+                      {pushPermission === 'granted' 
+                        ? 'Você receberá uma notificação assim que o pagamento for confirmado.' 
+                        : 'Ative para receber um alerta direto no navegador quando o status mudar.'}
+                    </p>
+                  </div>
+                </div>
+                {pushPermission !== 'granted' && (
+                  <button 
+                    onClick={requestNotificationPermission}
+                    className="bg-orange-600 hover:bg-orange-700 text-white font-black px-3 py-2 rounded-xl text-[10px] uppercase tracking-wider shrink-0 transition-all active:scale-95 cursor-pointer"
+                  >
+                    ATIVAR
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-3 pt-4">
+                <button 
+                  onClick={() => window.open(stripeCheckoutUrl, '_blank')}
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-lg shadow-orange-600/20 uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
+                >
+                  <Smartphone size={16} /> ABRIR PÁGINA DE PAGAMENTO NOVAMENTE
+                </button>
+
+                <button 
+                  onClick={verifyStripePaymentStatus}
+                  className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-black py-4 rounded-xl shadow-lg border border-neutral-700 uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
+                >
+                  <CheckCircle2 size={16} className="text-green-500" /> JÁ PAGUEI, VERIFICAR STATUS
+                </button>
+
+                <button 
+                  onClick={() => setView('payment')}
+                  className="w-full bg-neutral-950 border border-neutral-800 text-neutral-500 hover:text-white font-black py-3 rounded-xl uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <ArrowLeft size={14} /> ALTERAR MEIO DE PAGAMENTO / VOLTAR
                 </button>
               </div>
             </motion.div>
@@ -1999,17 +2326,16 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">CPF do Comprador</label>
+                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">CPF do Comprador <span className="text-neutral-500 font-normal">(Opcional)</span></label>
                             <input 
                               type="text" 
-                              required
                               value={manualSaleData.cpf}
                               onChange={(e) => {
                                 const formatted = formatCPF(e.target.value);
                                 setManualSaleData({ ...manualSaleData, cpf: formatted });
                               }}
                               className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
-                              placeholder="000.000.000-00"
+                              placeholder="000.000.000-00 (Opcional)"
                             />
                             {manualSaleErrors.cpf && <p className="text-red-500 text-[10px] uppercase font-black">{manualSaleErrors.cpf}</p>}
                           </div>

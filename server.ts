@@ -8,6 +8,22 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, deleteDoc, setLogLevel } from "firebase/firestore";
+import Stripe from "stripe";
+
+let stripeInstance: Stripe | null = null;
+
+function getStripe(): Stripe | null {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    return null;
+  }
+  if (!stripeInstance) {
+    stripeInstance = new Stripe(key, {
+      apiVersion: "2025-01-27.acacia" as any,
+    });
+  }
+  return stripeInstance;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -200,6 +216,195 @@ async function startServer() {
       res.json(sales);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/sales/hash/:hash", (req, res) => {
+    try {
+      const hash = req.params.hash;
+      const sale = db.prepare("SELECT * FROM sales WHERE hash = ?").get(hash);
+      if (sale) {
+        res.json(sale);
+      } else {
+        res.status(404).json({ error: "Compra não encontrada" });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/checkout/create-session", async (req, res) => {
+    try {
+      const { name, whatsapp, cpf, type, qty, hash } = req.body;
+      const cleanHash = hash || generateHash();
+      const qtyNum = Number(qty) || 1;
+      const unitPrice = type === "individual" ? 30 : 50;
+      const total = qtyNum * unitPrice;
+
+      // Cria a venda pendente localmente no SQLite
+      const insertPending = db.prepare(`
+        INSERT OR REPLACE INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      insertPending.run(
+        cleanHash,
+        name,
+        whatsapp || "",
+        cpf || "",
+        type,
+        qtyNum,
+        total,
+        "Stripe",
+        new Date().toISOString(),
+        "Pendente de Pagamento"
+      );
+
+      // Salva no Firestore
+      const pendingSaleObj = {
+        hash: cleanHash,
+        name,
+        whatsapp: whatsapp || "",
+        cpf: cpf || "",
+        type,
+        qty: qtyNum,
+        total,
+        method: "Stripe",
+        date: new Date().toISOString(),
+        status: "Pendente de Pagamento"
+      };
+      await saveToFirestore(pendingSaleObj);
+
+      const stripe = getStripe();
+      if (!stripe) {
+        // Se a API Key não estiver configurada, use a URL de Checkout Simulado (modo demonstração)
+        console.log("Stripe API key not configured. Using mocked checkout redirect.");
+        const mockUrl = `/api/checkout/success?session_id=mock_${cleanHash}&hash=${cleanHash}`;
+        res.json({ url: mockUrl, isMock: true });
+        return;
+      }
+
+      // Cria a sessão de Checkout real no Stripe (Suporta Cartão e Pix no Brasil)
+      const title = type === "individual" ? "Sunset 360º - Individual" : "Sunset 360º - Casadinho";
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card", "pix"],
+        payment_method_options: {
+          pix: {
+            expires_after_seconds: 3600, // Pix expira em 1 hora
+          },
+        },
+        line_items: [
+          {
+            price_data: {
+              currency: "brl",
+              product_data: {
+                name: title,
+                description: `Reserva de ${qtyNum}x pacote(s) do tipo ${type === 'individual' ? 'Individual' : 'Casadinho'} para o Sunset 360º 3ª Edição.`,
+              },
+              unit_amount: unitPrice * 100, // valor em centavos
+            },
+            quantity: qtyNum,
+          },
+        ],
+        metadata: {
+          hash: cleanHash,
+          name,
+          whatsapp,
+          cpf,
+          type,
+          qty: String(qtyNum),
+          total: String(total),
+        },
+        mode: "payment",
+        success_url: `${req.protocol}://${req.get("host")}/api/checkout/success?session_id={CHECKOUT_SESSION_ID}&hash=${cleanHash}`,
+        cancel_url: `${req.protocol}://${req.get("host")}/index.html?payment_status=cancel`,
+      });
+
+      res.json({ url: session.url, isMock: false });
+    } catch (e: any) {
+      console.error("Erro ao criar sessão do Stripe:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/checkout/success", async (req, res) => {
+    try {
+      const sessionId = req.query.session_id as string;
+      const hash = req.query.hash as string;
+
+      if (!hash) {
+        res.redirect("/index.html?payment_status=fail");
+        return;
+      }
+
+      // 1. Caso de pagamento simulado
+      if (sessionId && sessionId.startsWith("mock_")) {
+        console.log(`Processing mocked checkout success for hash: ${hash}`);
+        const existing = db.prepare("SELECT * FROM sales WHERE hash = ?").get(hash) as any;
+        if (existing) {
+          db.prepare("UPDATE sales SET status = 'Ativa' WHERE hash = ?").run(hash);
+          await updateFirestoreSaleStatus(hash, "Ativa");
+          io.emit("sale_updated", { id: existing.id, status: "Ativa" });
+        }
+        res.redirect(`/index.html?payment_status=success&hash=${hash}`);
+        return;
+      }
+
+      // 2. Caso de checkout real com o Stripe
+      const stripe = getStripe();
+      if (!stripe) {
+        res.redirect(`/index.html?payment_status=fail&error=stripe_not_configured`);
+        return;
+      }
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      if (session.payment_status === "paid") {
+        const metadata = session.metadata;
+        const finalHash = metadata?.hash || hash;
+
+        const existing = db.prepare("SELECT * FROM sales WHERE hash = ?").get(finalHash) as any;
+        if (existing) {
+          db.prepare("UPDATE sales SET status = 'Ativa' WHERE hash = ?").run(finalHash);
+          await updateFirestoreSaleStatus(finalHash, "Ativa");
+          io.emit("sale_updated", { id: existing.id, status: "Ativa" });
+        } else if (metadata) {
+          // Fallback: Insere o registro caso não tenha sido criado anteriormente
+          const name = metadata.name || "Cliente Stripe";
+          const whatsapp = metadata.whatsapp || "";
+          const cpf = metadata.cpf || "";
+          const type = metadata.type || "individual";
+          const qty = Number(metadata.qty) || 1;
+          const total = Number(metadata.total) || (qty * (type === "individual" ? 30 : 50));
+
+          const info = db.prepare(`
+            INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(finalHash, name, whatsapp, cpf, type, qty, total, "Stripe", new Date().toISOString(), "Ativa");
+
+          const newSale = {
+            id: info.lastInsertRowid,
+            hash: finalHash,
+            name,
+            whatsapp,
+            cpf,
+            type,
+            qty,
+            total,
+            method: "Stripe",
+            date: new Date().toISOString(),
+            status: "Ativa"
+          };
+          await saveToFirestore(newSale);
+          io.emit("sale_added", newSale);
+        }
+
+        res.redirect(`/index.html?payment_status=success&hash=${finalHash}`);
+      } else {
+        res.redirect(`/index.html?payment_status=fail`);
+      }
+    } catch (e: any) {
+      console.error("Erro no processamento do webhook/sucesso do Stripe:", e);
+      res.redirect(`/index.html?payment_status=fail&error=${encodeURIComponent(e.message)}`);
     }
   });
 
