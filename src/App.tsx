@@ -36,7 +36,8 @@ import {
   PlusCircle,
   Check,
   X,
-  Printer
+  Printer,
+  Calendar
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
@@ -72,26 +73,28 @@ const App = () => {
   const [viewedTicket, setViewedTicket] = useState<any>(null);
   const [currentSaleHash, setCurrentSaleHash] = useState('');
   
-  // Estados para Stripe
-  const [stripeCheckoutUrl, setStripeCheckoutUrl] = useState('');
-  const [isCreatingSession, setIsCreatingSession] = useState(false);
-  const [selectedStripeMethod, setSelectedStripeMethod] = useState('pix'); // pix, credit_card, debit_card
+  // Estados para Pagamento e Crediário / Agendamento
+  const [selectedPaymentOption, setSelectedPaymentOption] = useState<'pix' | 'card' | 'cash' | 'crediario'>('pix');
+  const [scheduledDueDate, setScheduledDueDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 15);
+    return d.toISOString().split('T')[0];
+  });
 
   // Estados para Registro de Venda Manual pelo Admin
   const [showManualSaleForm, setShowManualSaleForm] = useState(false);
   const [manualSaleData, setManualSaleData] = useState({
     name: '',
     whatsapp: '',
-    cpf: '',
     type: 'individual',
     qty: 1,
-    method: 'PIX',
-    status: 'Ativa'
+    method: 'Pix',
+    status: 'Ativa',
+    scheduledDate: ''
   });
   const [manualSaleErrors, setManualSaleErrors] = useState({
     name: '',
-    whatsapp: '',
-    cpf: ''
+    whatsapp: ''
   });
 
   const [customToast, setCustomToast] = useState<{
@@ -108,43 +111,6 @@ const App = () => {
     confirmLabel?: string;
     type?: 'danger' | 'info';
   }>({ show: false, title: '', message: '', onConfirm: () => {} });
-
-  // Push Notifications State & Helper Functions
-  const [pushPermission, setPushPermission] = useState<NotificationPermission>(
-    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
-  );
-
-  const sendPushNotification = (title: string, body: string) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        new Notification(title, {
-          body,
-          icon: '/favicon.ico'
-        });
-      } catch (err) {
-        console.error("Erro ao enviar notificação push:", err);
-      }
-    }
-  };
-
-  const requestNotificationPermission = async () => {
-    if ('Notification' in window) {
-      try {
-        const permission = await Notification.requestPermission();
-        setPushPermission(permission);
-        if (permission === 'granted') {
-          triggerToast("Notificações Push ativadas com sucesso! 🎉", "success");
-          sendPushNotification("Sunset 360º", "Você receberá alertas sobre a confirmação da sua compra!");
-        } else if (permission === 'denied') {
-          triggerToast("Permissão de notificação negada no seu navegador.", "info");
-        }
-      } catch (err) {
-        console.error("Erro ao solicitar permissão de notificação:", err);
-      }
-    } else {
-      triggerToast("Seu navegador não suporta Notificações Push.", "info");
-    }
-  };
 
   const triggerToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setCustomToast({ show: true, message, type });
@@ -491,10 +457,6 @@ const App = () => {
       
       // Se a venda pendente foi ativada em tempo real (Stripe confirmou), vai para sucesso
       if (updatedData.status === 'Ativa') {
-        sendPushNotification(
-          "🎉 Compra Confirmada - Sunset 360º",
-          `Seu ingresso (${updatedData.name || 'Cliente'}) foi ativado com sucesso! Acesse "Meus Convites" para visualizar.`
-        );
         playNotificationSound();
         triggerToast("Seu ingresso foi confirmado com sucesso! 🎉", "success");
 
@@ -506,21 +468,22 @@ const App = () => {
           }
           return prev;
         });
-      } else if (updatedData.status) {
-        sendPushNotification(
-          "Atualização no Pedido - Sunset 360º",
-          `O status do seu pedido foi alterado para: ${updatedData.status}`
-        );
       }
     });
 
     newSocket.on('sale_confirmed', (confirmedSale) => {
       setCurrentSaleHash(confirmedSale.hash);
-      sendPushNotification(
-        "✅ Pagamento Recebido!",
-        `Sua compra para o Sunset 360º foi confirmada!`
-      );
       playNotificationSound();
+    });
+
+    newSocket.on('sales_cleared', () => {
+      setSalesReport([]);
+      setMyTickets([]);
+      try {
+        localStorage.removeItem('sunset_360_my_tickets');
+      } catch (e) {
+        console.error(e);
+      }
     });
 
     // Handle URL Ticket View
@@ -640,6 +603,52 @@ const App = () => {
     );
   };
 
+  // Função para limpar todas as vendas do banco de dados (Zerar Sistema para Testes Reais)
+  const clearAllSales = () => {
+    if (!isAdminAuthenticated) {
+      triggerToast("Acesso negado. Apenas o administrador autenticado pode limpar o banco.", "error");
+      return;
+    }
+
+    triggerConfirm(
+      "LIMPAR TODAS AS VENDAS",
+      "⚠️ Tem certeza de que deseja apagar TODAS as vendas armazenadas no sistema? Esta ação limpará o banco de dados para os seus testes reais.",
+      () => {
+        fetch("/api/sales/clear-all", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            login: adminCredentials.login || "Sunset",
+            password: adminCredentials.password || "124578"
+          })
+        })
+          .then(res => res.json())
+          .then(result => {
+            if (result.success) {
+              setSalesReport([]);
+              setMyTickets([]);
+              try {
+                localStorage.removeItem('sunset_360_my_tickets');
+              } catch (e) {
+                console.error(e);
+              }
+              triggerToast("Banco de dados e convites zerados com sucesso! Pronto para os testes reais.", "success");
+            } else {
+              triggerToast(result.error || "Erro ao limpar o banco de dados.", "error");
+            }
+          })
+          .catch(err => {
+            console.error("Erro ao limpar banco de dados:", err);
+            triggerToast("Erro de conexão ao tentar limpar banco de dados.", "error");
+          });
+      },
+      "danger",
+      "Sim, Limpar Tudo"
+    );
+  };
+
   // Função para copiar PIX (compatível com o ambiente)
   const copyToClipboard = () => {
     const textArea = document.createElement("textarea");
@@ -658,48 +667,47 @@ const App = () => {
 
   // Notificação via WhatsApp
   const sendWhatsAppNotification = (sale: any) => {
-    const total = sale.total || (sale.qty * PRICES[sale.type as keyof typeof PRICES]);
-    const cups = sale.cups || ((sale.type === 'individual' ? 1 : 2) * sale.qty);
-    const wristbands = sale.wristbands || ((sale.type === 'individual' ? 1 : 2) * sale.qty);
-    
-    const formattedDate = new Date().toLocaleString('pt-BR', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit'
-    }).replace(',', ' às');
+    const total = sale.total || (sale.qty * (PRICES[sale.type as keyof typeof PRICES] || 30));
+    const cups = sale.cups || ((sale.type === 'individual' ? 1 : 2) * (sale.qty || 1));
+    const methodRaw = (sale.method || '').toLowerCase();
 
-    const paymentMethodText = sale.method === 'PIX' ? 'PIX (Copia e Cola)' : 'Pagamento na Entrega';
+    let messageText = '';
 
-    const messageText = `Olá! Acabei de garantir o meu convite para o *Sunset 360º 3ª Edição* no *${EVENT_LOCATION}*! 🌅✨
+    if (
+      methodRaw.includes('agendamento') || 
+      methodRaw.includes('crediá') || 
+      methodRaw.includes('crediar') || 
+      methodRaw.includes('agendado') || 
+      (sale.scheduledDate && sale.scheduledDate.trim() !== '')
+    ) {
+      let formattedScheduledDate = sale.scheduledDate || '';
+      if (formattedScheduledDate.includes('-')) {
+        const parts = formattedScheduledDate.split('-');
+        if (parts.length === 3) {
+          formattedScheduledDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+      }
+      if (!formattedScheduledDate) {
+        formattedScheduledDate = new Date().toLocaleDateString('pt-BR');
+      }
 
-📅 *Data:* 19 de Setembro às 18 horas
-
-*DADOS DA COMPRA:*
-👤 *Comprador:* ${sale.name}
-📅 *Data/Hora da compra:* ${formattedDate}
-🎟️ *Convite:* ${TICKET_LABELS[sale.type as keyof typeof TICKET_LABELS]}
-🔢 *Quantidade:* ${sale.qty}
-🥤 *Copos:* ${cups}
-🎗️ *Pulseiras:* ${wristbands}
-💰 *Valor Total:* R$ ${total},00
-💳 *Método:* ${paymentMethodText}
-
-*PONTOS DE VENDAS E RETIRADAS DE PULSEIRAS:*
-📍 Delivery Bebidas Geladas
-📍 Nathália Nolêto
-📍 Rogério Negrete
-
-⚠️ *Atenção:* A retirada de pulseiras nos pontos de vendas deve ser realizada até dia 10 de Setembro.
-
-🎫 *RETIRE SUA PULSEIRA(ª), APRESENTANDO A MENSAGEM DE COMPRA COM SEU NOME E SEUS DADOS.*
-
-🌐 *Garanta o seu também em:*
-${OFFICIAL_URL}
-
-📸 *Siga nosso Instagram e compartilhe:*
-https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
+      messageText = `👤 *Nome:* ${sale.name}\n📅 *Data do agendamento:* ${formattedScheduledDate}\n💰 *Valor:* R$ ${total},00\n🥤 *Copos e Pulseiras:* ${cups} un.`;
+    } else if (
+      methodRaw.includes('cartão') || 
+      methodRaw.includes('cartao') || 
+      methodRaw.includes('card') || 
+      methodRaw.includes('débito') || 
+      methodRaw.includes('crédito') || 
+      methodRaw.includes('debito') || 
+      methodRaw.includes('credito')
+    ) {
+      messageText = `👤 *Nome:* ${sale.name}\n💳 *Forma de pagamento:* Cartão\n💰 *Valor da compra:* R$ ${total},00\n🥤 *Copos e Pulseiras:* ${cups} un.`;
+    } else if (methodRaw.includes('dinheiro') || methodRaw.includes('cash')) {
+      messageText = `👤 *Nome:* ${sale.name}\n💳 *Forma de pagamento:* Dinheiro\n💰 *Valor da compra:* R$ ${total},00\n🥤 *Copos e Pulseiras:* ${cups} un.`;
+    } else {
+      // Padrão: Pix
+      messageText = `👤 *Nome:* ${sale.name}\n💳 *Forma de pagamento:* Pix\n💰 *Valor da compra:* R$ ${total},00\n🥤 *Copos e Pulseiras:* ${cups} un.`;
+    }
 
     const message = encodeURIComponent(messageText);
     
@@ -708,7 +716,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     window.open(waUrlOrganizer, '_blank');
     
     // Abrir aba para o Comprador
-    const buyerPhone = sale.whatsapp.replace(/\D/g, '');
+    const buyerPhone = (sale.whatsapp || '').replace(/\D/g, '');
     if (buyerPhone && buyerPhone !== ORGANIZER_WA) {
       setTimeout(() => {
         const waUrlBuyer = `https://api.whatsapp.com/send?phone=${buyerPhone}&text=${message}`;
@@ -718,19 +726,23 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
   };
 
   const handleWhatsAppNotify = () => {
-    if (!currentSaleHash) {
-      triggerToast("Aguardando confirmação do servidor... tente novamente em um instante.", "info");
-      return;
-    }
-    const saleData = {
+    const myTicket = (myTickets && myTickets.length > 0) 
+      ? (myTickets.find(t => t.hash === currentSaleHash) || myTickets[myTickets.length - 1]) 
+      : null;
+
+    const currentPrice = PRICES[ticketType as keyof typeof PRICES] || 30;
+
+    const saleData = myTicket || {
       name: userData.name,
       whatsapp: userData.whatsapp,
       cpf: userData.cpf,
       type: ticketType,
       qty: ticketsCount,
       total: ticketsCount * currentPrice,
-      method: paymentMethod === 'pix' ? 'PIX' : 'Retirada'
+      method: paymentMethod || selectedPaymentOption,
+      scheduledDate: scheduledDueDate
     };
+
     sendWhatsAppNotification(saleData);
   };
 
@@ -1087,88 +1099,27 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     if (errors.cpf) setErrors({ ...errors, cpf: '' });
   };
 
-  const handleStripeCheckout = async () => {
-    try {
-      setIsCreatingSession(true);
-      const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      setCurrentSaleHash(generatedHash);
+  const confirmPayment = (methodChoice?: string) => {
+    const chosenOption = methodChoice || selectedPaymentOption;
+    let methodLabel = 'Pix';
+    let statusToSet = 'Ativa';
+    let scheduledDateToSet = '';
 
-      const response = await fetch('/api/checkout/create-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: userData.name || '',
-          whatsapp: (userData.whatsapp || '').replace(/\D/g, ''),
-          cpf: (userData.cpf || '').replace(/\D/g, ''),
-          type: ticketType,
-          qty: ticketsCount,
-          hash: generatedHash,
-        }),
-      });
-
-      const result = await response.json();
-      if (result && result.url) {
-        setStripeCheckoutUrl(result.url);
-        
-        // Adicionar localmente como Pendente
-        const tempTicket = {
-          id: Date.now(),
-          hash: generatedHash,
-          name: userData.name || '',
-          whatsapp: (userData.whatsapp || '').replace(/\D/g, ''),
-          cpf: (userData.cpf || '').replace(/\D/g, ''),
-          type: ticketType,
-          qty: ticketsCount,
-          cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
-          wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
-          total: ticketsCount * currentPrice,
-          method: 'Stripe',
-          date: new Date().toISOString(),
-          status: 'Pendente de Pagamento'
-        };
-        setMyTickets(prev => [...prev, tempTicket]);
-
-        // Abre em nova aba
-        window.open(result.url, '_blank');
-        
-        // Vai para a tela de aguardando pagamento
-        setView('stripe_pending');
-      } else {
-        triggerToast(result.error || "Erro ao gerar sessão de pagamento Stripe.", "error");
-      }
-    } catch (err: any) {
-      console.error("Erro no checkout do Stripe:", err);
-      triggerToast("Erro de conexão ao tentar iniciar o pagamento.", "error");
-    } finally {
-      setIsCreatingSession(false);
+    if (chosenOption === 'pix') {
+      methodLabel = 'Pix';
+    } else if (chosenOption === 'card') {
+      methodLabel = 'Cartão (Débito ou Crédito)';
+    } else if (chosenOption === 'cash') {
+      methodLabel = 'Dinheiro';
+    } else if (chosenOption === 'crediario') {
+      methodLabel = 'Crediário / Agendamento';
+      statusToSet = 'Pendente de Pagamento';
+      scheduledDateToSet = scheduledDueDate || new Date().toISOString().split('T')[0];
+    } else {
+      methodLabel = chosenOption;
     }
-  };
 
-  const verifyStripePaymentStatus = () => {
-    if (!currentSaleHash) return;
-    
-    fetch(`/api/sales/hash/${currentSaleHash}`)
-      .then(res => res.json())
-      .then(sale => {
-        if (sale && sale.status === 'Ativa') {
-          // Atualiza localmente e vai para sucesso
-          setMyTickets(prev => prev.map(t => t.hash === currentSaleHash ? sale : t));
-          setView('success');
-          triggerToast("Seu pagamento foi confirmado com sucesso! 🎉", "success");
-        } else {
-          triggerToast("Seu pagamento ainda consta como pendente. Conclua no Stripe ou tente em instantes.", "info");
-        }
-      })
-      .catch(err => {
-        console.error(err);
-        triggerToast("Erro ao verificar status no servidor.", "error");
-      });
-  };
-
-  const confirmPayment = (method: string) => {
-    setPaymentMethod(method);
+    setPaymentMethod(methodLabel);
     const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     setCurrentSaleHash(generatedHash);
     
@@ -1182,16 +1133,17 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
       wristbands: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
       total: ticketsCount * currentPrice,
-      method: method === 'pix' ? 'PIX' : 'Retirada',
+      method: methodLabel,
       date: new Date().toISOString(),
-      status: 'Ativa'
+      status: statusToSet,
+      scheduledDate: scheduledDateToSet
     };
     
-    // Adicionar localmente para feedback imediato (será atualizado e sincronizado com ID real)
+    // Adicionar localmente para feedback imediato
     const tempTicket = { ...saleData, id: Date.now() };
-    setMyTickets([...myTickets, tempTicket]); 
+    setMyTickets(prev => [...prev, tempTicket]); 
     
-    // Envia a compra para ser registrada de forma segura no banco de dados via REST API
+    // Envia a compra para ser registrada no banco de dados
     fetch('/api/sales', {
       method: 'POST',
       headers: {
@@ -1202,7 +1154,6 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       .then(res => res.json())
       .then(result => {
         if (result.success && result.sale) {
-          // Atualiza o ticket local com o ID real gerado pelo SQLite
           setMyTickets(prev => prev.map(t => t.hash === generatedHash ? result.sale : t));
         }
       })
@@ -1213,9 +1164,12 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         }
       });
       
-    // Envia a notificação automaticamente via WhatsApp para o organizador e comprador
-    sendWhatsAppNotification(saleData);
-      
+    triggerToast(
+      chosenOption === 'crediario' 
+        ? `Agendamento salvo com sucesso para ${scheduledDateToSet}!` 
+        : "Venda registrada e salva com sucesso!", 
+      "success"
+    );
     setView('success');
   };
 
@@ -1238,7 +1192,7 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
   const handleRegisterManualSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newErrors = { name: '', whatsapp: '', cpf: '' };
+    const newErrors = { name: '', whatsapp: '' };
     let isValid = true;
 
     if (!manualSaleData.name || manualSaleData.name.trim().length < 3) {
@@ -1252,34 +1206,27 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
       isValid = false;
     }
 
-    if (manualSaleData.cpf && manualSaleData.cpf.trim() !== '') {
-      if (!validateCPF(manualSaleData.cpf)) {
-        newErrors.cpf = 'Informe um CPF válido e bem formatado.';
-        isValid = false;
-      }
-    }
-
     setManualSaleErrors(newErrors);
 
     if (isValid) {
       const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       const currentPrice = PRICES[manualSaleData.type as keyof typeof PRICES] || 30;
       const cleanWhatsapp = (manualSaleData.whatsapp || '').replace(/\D/g, '');
-      const cleanCpf = (manualSaleData.cpf || '').replace(/\D/g, '');
 
       const sale = {
         hash: generatedHash,
         name: manualSaleData.name.trim(),
         whatsapp: cleanWhatsapp,
-        cpf: cleanCpf,
+        cpf: '',
         type: manualSaleData.type,
         qty: Number(manualSaleData.qty) || 1,
         cups: (manualSaleData.type === 'individual' ? 1 : 2) * (Number(manualSaleData.qty) || 1),
         wristbands: (manualSaleData.type === 'individual' ? 1 : 2) * (Number(manualSaleData.qty) || 1),
         total: (Number(manualSaleData.qty) || 1) * currentPrice,
-        method: manualSaleData.method || 'PIX',
+        method: manualSaleData.method || 'Pix',
         date: new Date().toISOString(),
-        status: manualSaleData.status || 'Ativa'
+        status: manualSaleData.status || 'Ativa',
+        scheduledDate: manualSaleData.scheduledDate || ''
       };
 
       try {
@@ -1297,23 +1244,20 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         }
 
         if (response.ok && result.success) {
-          triggerToast("Venda manual registrada com sucesso e lançada no dashboard!", "success");
+          triggerToast("Venda registrada e salva no dashboard com sucesso!", "success");
           
           setManualSaleData({
             name: '',
             whatsapp: '',
-            cpf: '',
             type: 'individual',
             qty: 1,
-            method: 'PIX',
-            status: 'Ativa'
+            method: 'Pix',
+            status: 'Ativa',
+            scheduledDate: ''
           });
           setShowManualSaleForm(false);
           
           fetchSalesReport();
-          
-          // Executa a notificação via WhatsApp para ambos
-          sendWhatsAppNotification(result.sale || sale);
         } else {
           triggerToast("Erro ao registrar venda: " + (result.error || response.statusText || "Erro no servidor"), "error");
         }
@@ -1773,15 +1717,6 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                         />
                         {errors.whatsapp && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.whatsapp}</p>}
                       </div>
-                      <div>
-                        <input 
-                          type="tel" value={userData.cpf}
-                          onChange={handleCPFChange}
-                          className={`w-full bg-neutral-950 border ${errors.cpf ? 'border-red-500' : 'border-neutral-800'} rounded-lg p-3 text-sm focus:border-orange-500 outline-none text-white font-bold italic`}
-                          placeholder="CPF (Opcional - Ex: 000.000.000-00)"
-                        />
-                        {errors.cpf && <p className="text-red-500 text-[10px] mt-1 font-bold italic uppercase tracking-tighter">{errors.cpf}</p>}
-                      </div>
                   </div>
                 </div>
                 <div className="bg-neutral-900 p-4 rounded-xl border border-neutral-800 flex items-center justify-between">
@@ -1800,13 +1735,13 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                     <span className="text-neutral-400 uppercase text-[10px] font-black tracking-widest">Total Geral:</span>
                     <span className="text-3xl font-black text-orange-500 italic">R$ {ticketsCount * currentPrice},00</span>
                   </div>
-                  <button onClick={handlePurchase} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-sm transition-transform active:scale-95 italic">IR PARA O PAGAMENTO</button>
+                  <button onClick={handlePurchase} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-sm transition-transform active:scale-95 italic cursor-pointer">SALVAR</button>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* TELA DE SELEÇÃO DE MEIO DE PAGAMENTO */}
+          {/* TELA DE SELEÇÃO DE MEIO DE PAGAMENTO & AGENDAMENTO CREDIÁRIO */}
           {view === 'payment' && (
             <motion.div 
               key="payment"
@@ -1826,151 +1761,130 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                 <div className="grid grid-cols-1 gap-3 font-black">
                   {[
                     { id: 'pix', label: 'Pix (Confirmação Imediata)', desc: 'Chave copia e cola ou QR Code', icon: <QrCode size={20} className="text-orange-500" /> },
-                    { id: 'credit_card', label: 'Cartão de Crédito', desc: 'Processamento instantâneo via Stripe', icon: <DollarSign size={20} className="text-orange-500" /> },
-                    { id: 'debit_card', label: 'Cartão de Débito', desc: 'Débito em conta seguro', icon: <Smartphone size={20} className="text-orange-500" /> },
+                    { id: 'card', label: 'Cartão (Débito ou Crédito)', desc: 'Pagamento na maquininha ou presencial', icon: <DollarSign size={20} className="text-orange-500" /> },
+                    { id: 'cash', label: 'Dinheiro / Espécie', desc: 'Pagamento em mãos no ato da entrega', icon: <ShoppingBag size={20} className="text-orange-500" /> },
+                    { id: 'crediario', label: 'Crediário / Agendamento de Pagamento', desc: 'Agende uma data futura real para o cliente pagar', icon: <Calendar size={20} className="text-orange-500" /> },
                   ].map((method) => (
                     <button
                       key={method.id}
-                      onClick={() => setSelectedStripeMethod(method.id)}
+                      onClick={() => setSelectedPaymentOption(method.id as any)}
                       className={`p-4 rounded-2xl border text-left flex items-start gap-3 transition-all relative cursor-pointer ${
-                        selectedStripeMethod === method.id 
-                          ? 'bg-neutral-900 border-orange-500 shadow-xl shadow-orange-500/5' 
+                        selectedPaymentOption === method.id 
+                          ? 'bg-neutral-900 border-orange-500 shadow-xl shadow-orange-500/10' 
                           : 'bg-neutral-900/60 border-neutral-800 hover:border-neutral-700'
                       }`}
                     >
                       <div className="p-2 bg-neutral-950 rounded-xl shrink-0">
                         {method.icon}
                       </div>
-                      <div className="space-y-0.5">
+                      <div className="space-y-0.5 pr-6">
                         <h4 className="text-xs font-black text-white italic uppercase tracking-tighter leading-tight">{method.label}</h4>
                         <p className="text-[9px] text-neutral-500 font-bold uppercase tracking-tight leading-tight">{method.desc}</p>
                       </div>
-                      {selectedStripeMethod === method.id && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center">
-                          <Check size={10} className="text-black font-black" />
+                      {selectedPaymentOption === method.id && (
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center shadow-lg shadow-orange-500/50">
+                          <Check size={12} className="text-black font-black" />
                         </div>
                       )}
                     </button>
                   ))}
                 </div>
 
+                {/* AGENDA DE PAGAMENTO SE O CREDIÁRIO FOR SELECIONADO */}
+                {selectedPaymentOption === 'crediario' && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-neutral-900 border border-orange-500/40 p-5 rounded-2xl space-y-4 shadow-xl"
+                  >
+                    <div className="flex items-center gap-2 border-b border-neutral-800 pb-3">
+                      <Calendar className="text-orange-500 shrink-0" size={20} />
+                      <div>
+                        <h3 className="text-xs font-black uppercase text-white tracking-wider italic">AGENDA DO CREDIÁRIO</h3>
+                        <p className="text-[9px] text-neutral-400 font-bold">Defina o dia em que o cliente efetuará o pagamento.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] text-neutral-400 uppercase font-black tracking-widest block">
+                        Escolha a Data de Vencimento:
+                      </label>
+
+                      {/* Atalhos rápidos de agendamento */}
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { label: '+ 7 dias', days: 7 },
+                          { label: '+ 15 dias', days: 15 },
+                          { label: '+ 30 dias', days: 30 },
+                        ].map((preset) => (
+                          <button
+                            key={preset.days}
+                            type="button"
+                            onClick={() => {
+                              const d = new Date();
+                              d.setDate(d.getDate() + preset.days);
+                              setScheduledDueDate(d.toISOString().split('T')[0]);
+                            }}
+                            className="bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 hover:border-orange-500 text-neutral-300 hover:text-white py-2 text-[10px] font-black rounded-lg uppercase transition-all cursor-pointer"
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Input de Data / Agenda Real */}
+                      <div className="relative pt-1">
+                        <input 
+                          type="date"
+                          min={new Date().toISOString().split('T')[0]}
+                          value={scheduledDueDate}
+                          onChange={(e) => setScheduledDueDate(e.target.value)}
+                          className="w-full bg-neutral-950 border border-neutral-700 focus:border-orange-500 text-white font-black italic rounded-xl p-3 text-sm outline-none transition-colors cursor-pointer"
+                        />
+                      </div>
+
+                      {/* Card de confirmação do agendamento */}
+                      <div className="bg-orange-500/10 border border-orange-500/30 p-3 rounded-xl space-y-1">
+                        <p className="text-[10px] text-neutral-400 uppercase font-black tracking-wider">
+                          🗓️ Data Agendada para Cobrança:
+                        </p>
+                        <p className="text-base font-black text-orange-500 uppercase tracking-tight">
+                          {scheduledDueDate ? scheduledDueDate.split('-').reverse().join('/') : 'Escolha uma data'}
+                        </p>
+                        <p className="text-[9px] text-neutral-500 italic">
+                          A venda ficará registrada com o status <span className="text-white font-black">"Pendente de Pagamento"</span> até a quitação.
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
                 <div className="bg-neutral-900 p-5 rounded-2xl border border-neutral-800 space-y-4">
                   <div className="flex justify-between items-center text-xs uppercase font-black italic tracking-tighter">
                     <span className="text-neutral-500">Valor total a pagar:</span>
                     <span className="text-xl text-orange-500 font-black">R$ {ticketsCount * currentPrice},00</span>
                   </div>
-                  
-                  <div className="pt-3 border-t border-neutral-800 flex items-center gap-2">
-                    <CheckCircle2 size={16} className="text-orange-500" />
-                    <span className="text-[9px] text-neutral-500 uppercase font-black leading-none">Pagamento seguro processado pela </span>
-                    <span className="text-[9px] text-white font-black italic uppercase leading-none">STRIPE</span>
+                  <div className="flex justify-between items-center text-xs uppercase font-black italic tracking-tighter pt-2 border-t border-neutral-800">
+                    <span className="text-neutral-500">Comprador:</span>
+                    <span className="text-white font-bold">{userData.name}</span>
                   </div>
                 </div>
 
                 <button 
-                  onClick={handleStripeCheckout} 
-                  disabled={isCreatingSession}
-                  className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-800 text-white font-black py-5 rounded-xl flex items-center justify-center gap-2 transition-all uppercase tracking-widest shadow-lg italic shadow-orange-600/20 active:scale-95 text-xs cursor-pointer"
+                  onClick={() => confirmPayment(selectedPaymentOption)} 
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-5 rounded-xl flex items-center justify-center gap-2 transition-all uppercase tracking-widest shadow-lg italic shadow-orange-600/20 active:scale-95 text-xs cursor-pointer"
                 >
-                  {isCreatingSession ? (
+                  {selectedPaymentOption === 'crediario' ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      <span>GERANDO SESSÃO DE PAGAMENTO...</span>
+                      <Calendar size={18} />
+                      <span>SALVAR AGENDAMENTO E FINALIZAR</span>
                     </>
                   ) : (
                     <>
-                      <span>IR PARA PAGAMENTO SEGURO</span>
-                      <ChevronRight size={16} />
+                      <CheckCircle2 size={18} />
+                      <span>SALVAR VENDA</span>
                     </>
                   )}
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {/* TELA DE AGUARDANDO PAGAMENTO STRIPE */}
-          {view === 'stripe_pending' && (
-            <motion.div 
-              key="stripe_pending"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="text-center py-6 space-y-6 italic font-bold"
-            >
-              <div className="flex justify-center">
-                <div className="w-20 h-20 bg-orange-500/10 rounded-full flex items-center justify-center border-2 border-orange-500 animate-pulse">
-                  <Clock size={36} className="text-orange-500 animate-spin" style={{ animationDuration: '4s' }} />
-                </div>
-              </div>
-              <div className="px-4 text-center">
-                <h2 className="text-2xl font-black mb-1 uppercase tracking-tighter text-white">AGUARDANDO PAGAMENTO</h2>
-                <p className="text-neutral-400 text-xs font-bold leading-relaxed">
-                  Abrimos uma nova janela de pagamento seguro da Stripe. <br/>
-                  Escolha Pix, Cartão de Crédito ou Débito para finalizar.
-                </p>
-              </div>
-
-              <div className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl text-left space-y-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="text-orange-500 shrink-0 mt-0.5" size={18} />
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-white font-black uppercase tracking-tight leading-none mb-1">O que fazer agora?</p>
-                    <p className="text-[10px] text-neutral-400 font-bold leading-normal">
-                      1. Conclua o pagamento na aba aberta do Stripe.<br/>
-                      2. Nosso sistema detectará o pagamento <span className="text-orange-500 font-black">automaticamente em tempo real</span>.<br/>
-                      3. Se a aba não abriu, clique no botão laranja abaixo.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* BANNER PARA ATIVAR NOTIFICAÇÕES PUSH */}
-              <div className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl text-left flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-xl shrink-0 ${pushPermission === 'granted' ? 'bg-green-500/10 text-green-500' : 'bg-orange-500/10 text-orange-500'}`}>
-                    <Bell size={20} />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-white font-black uppercase tracking-tight leading-tight">
-                      {pushPermission === 'granted' ? 'Notificações Ativas' : 'Notificações Push'}
-                    </p>
-                    <p className="text-[9px] text-neutral-400 font-bold leading-tight">
-                      {pushPermission === 'granted' 
-                        ? 'Você receberá uma notificação assim que o pagamento for confirmado.' 
-                        : 'Ative para receber um alerta direto no navegador quando o status mudar.'}
-                    </p>
-                  </div>
-                </div>
-                {pushPermission !== 'granted' && (
-                  <button 
-                    onClick={requestNotificationPermission}
-                    className="bg-orange-600 hover:bg-orange-700 text-white font-black px-3 py-2 rounded-xl text-[10px] uppercase tracking-wider shrink-0 transition-all active:scale-95 cursor-pointer"
-                  >
-                    ATIVAR
-                  </button>
-                )}
-              </div>
-
-              <div className="space-y-3 pt-4">
-                <button 
-                  onClick={() => window.open(stripeCheckoutUrl, '_blank')}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-lg shadow-orange-600/20 uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
-                >
-                  <Smartphone size={16} /> ABRIR PÁGINA DE PAGAMENTO NOVAMENTE
-                </button>
-
-                <button 
-                  onClick={verifyStripePaymentStatus}
-                  className="w-full bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-black py-4 rounded-xl shadow-lg border border-neutral-700 uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
-                >
-                  <CheckCircle2 size={16} className="text-green-500" /> JÁ PAGUEI, VERIFICAR STATUS
-                </button>
-
-                <button 
-                  onClick={() => setView('payment')}
-                  className="w-full bg-neutral-950 border border-neutral-800 text-neutral-500 hover:text-white font-black py-3 rounded-xl uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                >
-                  <ArrowLeft size={14} /> ALTERAR MEIO DE PAGAMENTO / VOLTAR
                 </button>
               </div>
             </motion.div>
@@ -1990,84 +1904,83 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                   <CheckCircle2 size={40} className="text-white" />
                 </div>
               </div>
+
               <div className="px-4">
-                <h2 className="text-3xl font-black mb-2 italic uppercase tracking-tighter text-white font-black">RESERVA ATIVA!</h2>
-                <p className="text-neutral-400 text-sm leading-relaxed font-bold italic">A sua reserva para o **Sunset 360º** já está confirmada.</p>
+                <h2 className="text-3xl font-black mb-2 italic uppercase tracking-tighter text-white font-black">VENDA REGISTRADA!</h2>
+                <p className="text-neutral-400 text-xs leading-relaxed font-bold italic">A venda foi salva com sucesso no seu controle de vendas.</p>
               </div>
-              <div className="bg-orange-500/10 border border-orange-500/30 p-4 rounded-2xl flex flex-col gap-4 text-left">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="text-orange-500 shrink-0" size={20} />
-                    <div className="space-y-1">
-                        <p className="text-[11px] text-white font-black uppercase tracking-tight italic">Próximo Passo!</p>
-                        <p className="text-[10px] text-neutral-400 font-bold leading-tight">
-                            Clique no botão abaixo para abrir o WhatsApp. <span className="text-orange-500 font-black">Anexe seu comprovante</span> na conversa para validação.
-                        </p>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-3 border-t border-orange-500/20 space-y-2">
-                    <p className="text-[10px] text-white font-black uppercase italic tracking-tighter">Pontos de Venda e Retirada (Até dia 10/09):</p>
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-neutral-400 font-bold">📍 Delivery Bebidas Geladas</p>
-                      <p className="text-[10px] text-neutral-400 font-bold">📍 Nathália Nolêto</p>
-                      <p className="text-[10px] text-neutral-400 font-bold">📍 Rogério Negrete</p>
-                    </div>
+
+              {/* CARD DE RESUMO REORGANIZADO E FORMATADO */}
+              <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800 text-left relative overflow-hidden shadow-2xl space-y-4">
+                <div className="absolute top-0 right-0 p-4 opacity-10"><Ticket size={48} className="text-orange-500" /></div>
+                
+                <div className="flex justify-between items-center pb-3 border-b border-neutral-800">
+                    <h3 className="font-bold flex items-center gap-2 text-sm text-orange-500 uppercase tracking-widest italic font-black">
+                      <ShoppingBag size={18} /> RESUMO DA VENDA
+                    </h3>
+                    <span className={`text-[9px] px-2.5 py-1 rounded-full font-black uppercase ring-1 ${
+                      selectedPaymentOption === 'crediario' || paymentMethod.includes('Agendamento')
+                        ? 'bg-amber-500/20 text-amber-400 ring-amber-500/30'
+                        : 'bg-green-500/20 text-green-500 ring-green-500/30'
+                    }`}>
+                      {selectedPaymentOption === 'crediario' || paymentMethod.includes('Agendamento') ? 'Pendente (Agendado)' : 'Ativa'}
+                    </span>
+                </div>
+
+                <div className="space-y-3 text-xs uppercase font-black tracking-tighter italic">
+                  <div className="flex justify-between font-bold">
+                    <span className="text-neutral-500">Comprador</span>
+                    <span className="text-white truncate max-w-[180px] font-black">{userData.name || 'Cliente'}</span>
                   </div>
 
-                  <div className="bg-black/40 p-2 rounded-xl border border-orange-500/20 flex items-center gap-2">
-                     <span className="text-[10px] font-black text-orange-500 italic">⚠️ IMPORTANTE:</span>
-                     <span className="text-[9px] text-neutral-400 font-bold leading-tight">Retire suas pulseiras nos pontos de vendas até dia 10 de Setembro.</span>
+                  <div className="flex justify-between font-bold">
+                    <span className="text-neutral-500">Categoria</span>
+                    <span className="text-orange-500 font-black">{TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]} ({ticketsCount}x)</span>
                   </div>
-              </div>
-              <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800 text-left relative overflow-hidden shadow-2xl">
-                <div className="absolute top-0 right-0 p-4 opacity-10"><Ticket size={48} className="text-orange-500" /></div>
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold flex items-center gap-2 text-sm text-orange-500 uppercase tracking-widest italic font-black"><ShoppingBag size={16} /> Resumo</h3>
-                    <span className="text-[8px] bg-green-500/20 text-green-500 px-2 py-1 rounded-full font-black uppercase ring-1 ring-green-500/20">Ativa</span>
-                </div>
-                <div className="space-y-3 text-xs uppercase font-black tracking-tighter italic">
-                  <div className="flex justify-between font-bold"><span>Comprador</span><span className="text-white truncate max-w-[150px]">{userData.name}</span></div>
-                  <div className="flex justify-between font-bold"><span>Categoria</span><span className="text-orange-500">{TICKET_LABELS[ticketType as keyof typeof TICKET_LABELS]}</span></div>
+
+                  <div className="flex justify-between font-bold">
+                    <span className="text-neutral-500">Forma de Pagamento</span>
+                    <span className="text-white font-black">{paymentMethod || selectedPaymentOption}</span>
+                  </div>
+
+                  {(selectedPaymentOption === 'crediario' || paymentMethod.includes('Agendamento')) && scheduledDueDate && (
+                    <div className="flex justify-between font-bold bg-amber-500/10 p-2 rounded-lg border border-amber-500/30">
+                      <span className="text-amber-400">Data do Agendamento</span>
+                      <span className="text-amber-300 font-black">{scheduledDueDate.split('-').reverse().join('/')}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between font-bold">
+                    <span className="text-neutral-500">Copos e Pulseiras</span>
+                    <span className="text-neutral-300 font-black">{(ticketType === 'individual' ? 1 : 2) * ticketsCount} unidades</span>
+                  </div>
+
                   <div className="flex justify-between font-black text-lg text-white pt-3 border-t border-neutral-800 leading-none">
-                    <span className="text-neutral-400 text-xs font-bold tracking-widest uppercase leading-none">Total Pago</span>
+                    <span className="text-neutral-400 text-xs font-bold tracking-widest uppercase leading-none">Total Pago / Agendado</span>
                     <span className="text-orange-500 italic font-black">R$ {ticketsCount * currentPrice},00</span>
                   </div>
                 </div>
               </div>
-              <button onClick={handleWhatsAppNotify} className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl shadow-lg shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
-                <MessageCircle size={20} /> ENVIAR DADOS E COMPROVANTE
-              </button>
-              <button onClick={handleShare} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic">
-                <Share size={20} /> COMPARTILHAR RESERVA
-              </button>
 
-              <button 
-                onClick={() => setShowQRCode(!showQRCode)} 
-                className="w-full bg-neutral-900 border border-neutral-800 hover:border-orange-500 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic"
-              >
-                <Smartphone size={20} /> {showQRCode ? 'OCULTAR QR CODE' : 'GERAR QR CODE'}
-              </button>
+              {/* BOTÕES DE AÇÃO REORGANIZADOS */}
+              <div className="space-y-3 pt-2">
+                <button 
+                  onClick={handleWhatsAppNotify} 
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl shadow-lg shadow-green-600/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all active:scale-95 italic cursor-pointer"
+                >
+                  <MessageCircle size={20} /> FINALIZAR
+                </button>
 
-              <AnimatePresence>
-                {showQRCode && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-2xl">
-                      <QRCodeSVG 
-                        value={OFFICIAL_URL} 
-                        size={200}
-                        level="H"
-                        includeMargin={true}
-                      />
-                      <p className="text-black text-[10px] font-black uppercase tracking-widest italic leading-none">Aponte a câmera para compartilhar</p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                <button 
+                  onClick={() => {
+                    setUserData({ name: '', whatsapp: '', cpf: '' });
+                    setView('home');
+                  }} 
+                  className="w-full bg-neutral-900 border border-neutral-800 hover:border-orange-500 text-white font-black py-4 rounded-xl shadow-lg uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all active:scale-95 italic cursor-pointer"
+                >
+                  <PlusCircle size={18} className="text-orange-500" /> REGISTRAR NOVA VENDA
+                </button>
+              </div>
             </motion.div>
           )}
 
@@ -2080,9 +1993,31 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
               exit={{ opacity: 0, y: 50 }}
               className="space-y-6 font-bold"
             >
-               <div className="flex items-center gap-2 mb-2">
-                 <button onClick={() => setView('home')} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={20}/></button>
-                 <h2 className="text-2xl font-bold italic uppercase tracking-tighter text-white font-black leading-tight">Meus Convites</h2>
+               <div className="flex items-center justify-between gap-2 mb-2">
+                 <div className="flex items-center gap-2">
+                   <button onClick={() => setView('home')} className="p-1 hover:bg-neutral-800 rounded-full text-orange-500 transition-colors"><ArrowLeft size={20}/></button>
+                   <h2 className="text-2xl font-bold italic uppercase tracking-tighter text-white font-black leading-tight">Meus Convites</h2>
+                 </div>
+                 {myTickets.length > 0 && (
+                   <button 
+                     onClick={() => {
+                       triggerConfirm(
+                         "ZERAR MEUS CONVITES",
+                         "Deseja apagar todos os convites da sua sessão?",
+                         () => {
+                           setMyTickets([]);
+                           try { localStorage.removeItem('sunset_360_my_tickets'); } catch(e){}
+                           triggerToast("Sessão de convites zerada com sucesso!", "info");
+                         },
+                         "danger",
+                         "Limpar Convites"
+                       );
+                     }}
+                     className="text-[10px] text-neutral-400 hover:text-red-400 bg-neutral-900 border border-neutral-800 hover:border-red-500/50 px-3 py-1.5 rounded-xl font-black uppercase italic transition-colors flex items-center gap-1 cursor-pointer"
+                   >
+                     <Trash2 size={12} /> Limpar Convites
+                   </button>
+                 )}
               </div>
               {myTickets.length === 0 ? (
                  <div className="bg-neutral-900 p-10 rounded-3xl border border-neutral-800 text-center space-y-4 shadow-xl">
@@ -2098,8 +2033,8 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                    <Countdown />
                    
                    <div className="space-y-4">
-                     {myTickets.map((ticket) => (
-                        <div key={ticket.id} className="bg-neutral-900 p-5 rounded-2xl border-2 border-green-500/30 relative overflow-hidden shadow-2xl group">
+                     {myTickets.map((ticket, index) => (
+                        <div key={ticket.hash ? `ticket-${ticket.hash}` : `ticket-${ticket.id || index}-${index}`} className="bg-neutral-900 p-5 rounded-2xl border-2 border-green-500/30 relative overflow-hidden shadow-2xl group">
                             <div className="absolute top-4 right-4 flex flex-col items-end gap-1">
                                 <div className="flex items-center gap-1.5 bg-green-500/20 px-2 py-1 rounded-full border border-green-500/30">
                                     <span className="relative flex h-2 w-2">
@@ -2336,21 +2271,6 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">CPF do Comprador <span className="text-neutral-500 font-normal">(Opcional)</span></label>
-                            <input 
-                              type="text" 
-                              value={manualSaleData.cpf}
-                              onChange={(e) => {
-                                const formatted = formatCPF(e.target.value);
-                                setManualSaleData({ ...manualSaleData, cpf: formatted });
-                              }}
-                              className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
-                              placeholder="000.000.000-00 (Opcional)"
-                            />
-                            {manualSaleErrors.cpf && <p className="text-red-500 text-[10px] uppercase font-black">{manualSaleErrors.cpf}</p>}
-                          </div>
-
-                          <div className="space-y-1">
                             <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Tipo de Ingresso</label>
                             <select 
                               value={manualSaleData.type}
@@ -2387,13 +2307,38 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                             <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Forma de Pagamento</label>
                             <select 
                               value={manualSaleData.method}
-                              onChange={(e) => setManualSaleData({ ...manualSaleData, method: e.target.value })}
+                              onChange={(e) => {
+                                const selectedMethod = e.target.value;
+                                const isScheduled = selectedMethod === 'Agendamento de Pagamento' || selectedMethod === 'Crediário';
+                                setManualSaleData({ 
+                                  ...manualSaleData, 
+                                  method: selectedMethod,
+                                  status: isScheduled ? 'Pendente de Pagamento' : manualSaleData.status,
+                                  scheduledDate: isScheduled && !manualSaleData.scheduledDate ? new Date().toISOString().split('T')[0] : manualSaleData.scheduledDate
+                                });
+                              }}
                               className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
                             >
-                              <option value="PIX">PIX</option>
-                              <option value="Dinheiro">Dinheiro / Retirada</option>
+                              <option value="Pix">Se foi pago no Pix</option>
+                              <option value="Cartão (Débito ou Crédito)">Se foi cartão (Débito ou Crédito)</option>
+                              <option value="Dinheiro">Se foi em dinheiro</option>
+                              <option value="Agendamento de Pagamento">Agendamento de pagamento (Crediário)</option>
                             </select>
                           </div>
+
+                          {(manualSaleData.method === 'Agendamento de Pagamento' || manualSaleData.method === 'Crediário') && (
+                            <div className="space-y-1">
+                              <label className="text-orange-400 uppercase tracking-widest text-[9px] block font-black flex items-center gap-1">
+                                <Calendar size={12} /> Data Prevista de Pagamento
+                              </label>
+                              <input 
+                                type="date"
+                                value={manualSaleData.scheduledDate || new Date().toISOString().split('T')[0]}
+                                onChange={(e) => setManualSaleData({ ...manualSaleData, scheduledDate: e.target.value })}
+                                className="w-full bg-neutral-950 border border-orange-500/50 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
+                              />
+                            </div>
+                          )}
 
                           <div className="space-y-1">
                             <label className="text-neutral-400 uppercase tracking-widest text-[9px] block">Status Inicial</label>
@@ -2402,8 +2347,8 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                               onChange={(e) => setManualSaleData({ ...manualSaleData, status: e.target.value })}
                               className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-white focus:border-orange-500 outline-none font-bold italic"
                             >
-                              <option value="Ativa">Ativa</option>
-                              <option value="Pendente de Pagamento">Pendente de Pagamento</option>
+                              <option value="Ativa">Ativa (Pago / Confirmado)</option>
+                              <option value="Pendente de Pagamento">Pendente de Pagamento (Agendado)</option>
                             </select>
                           </div>
 
@@ -2413,9 +2358,9 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                             </span>
                             <button 
                               type="submit" 
-                              className="bg-green-600 hover:bg-green-700 text-white font-black px-6 py-2.5 rounded-xl shadow-lg shadow-green-500/10 transition-all uppercase tracking-widest text-xs flex items-center gap-2"
+                              className="bg-green-600 hover:bg-green-700 text-white font-black px-6 py-2.5 rounded-xl shadow-lg shadow-green-500/10 transition-all uppercase tracking-widest text-xs flex items-center gap-2 cursor-pointer"
                             >
-                              <Check size={14} /> SALVAR & NOTIFICAR WHATSAPP
+                              <Check size={14} /> SALVAR
                             </button>
                           </div>
                         </form>
@@ -2566,9 +2511,17 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                <div className="flex gap-2">
                  <button 
                     onClick={() => setView('admin_history')}
-                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-[10px] transition-transform active:scale-95 italic flex items-center justify-center gap-2"
+                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black py-4 rounded-xl shadow-xl uppercase tracking-widest text-[10px] transition-transform active:scale-95 italic flex items-center justify-center gap-2 cursor-pointer"
                  >
                     <ClipboardList size={16} /> VER HISTÓRICO COMPLETO
+                 </button>
+
+                 <button 
+                    onClick={clearAllSales}
+                    className="bg-neutral-900 border border-neutral-800 hover:border-red-500 hover:bg-red-500/10 text-neutral-400 hover:text-red-500 font-black px-4 py-4 rounded-xl shadow-xl uppercase tracking-widest text-[10px] transition-all active:scale-95 italic flex items-center justify-center gap-2 cursor-pointer"
+                    title="Limpar todos os registros para testes reais"
+                 >
+                    <Trash2 size={16} /> LIMPAR TUDO
                  </button>
                </div>
                <div className="bg-neutral-900 rounded-2xl border border-neutral-800 overflow-hidden shadow-2xl">
@@ -2598,8 +2551,8 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                           {salesReport.filter(sale => 
                             sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
                             sale.status.toLowerCase().includes(adminSearch.toLowerCase())
-                          ).map((sale) => (
-                            <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
+                          ).map((sale, index) => (
+                            <tr key={sale.hash ? `admin-sale-${sale.hash}` : `admin-sale-${sale.id || index}-${index}`} className="hover:bg-orange-500/5 transition-colors group">
                               <td className="p-4 font-black text-white italic truncate max-w-[80px] leading-none">{sale.name}</td>
                               <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
                               <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
@@ -2703,12 +2656,17 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-neutral-800 font-bold italic">
-                        {getSortedSales(salesReport).map((sale) => (
-                          <tr key={sale.id} className="hover:bg-orange-500/5 transition-colors group">
+                        {getSortedSales(salesReport).map((sale, index) => (
+                          <tr key={sale.hash ? `history-sale-${sale.hash}` : `history-sale-${sale.id || index}-${index}`} className="hover:bg-orange-500/5 transition-colors group">
                             <td className="p-4 text-neutral-400 whitespace-nowrap text-xs font-mono">{formatPurchaseDateTime(sale)}</td>
-                            <td className="p-4 font-black text-white italic truncate max-w-[100px] leading-none">
+                            <td className="p-4 font-black text-white italic truncate max-w-[120px] leading-tight">
                               <div>{sale.name}</div>
-                              {sale.cpf && <div className="text-[7.5px] text-neutral-500 font-mono mt-1 font-normal tracking-normal">{formatCPF(sale.cpf)}</div>}
+                              <div className="text-[8px] text-neutral-400 font-normal tracking-normal mt-0.5">
+                                <span>{sale.method || 'Pix'}</span>
+                                {sale.scheduledDate && (
+                                  <span className="text-orange-400 block font-bold">📅 Pagar em: {sale.scheduledDate.split('-').reverse().join('/')}</span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
                             <td className="p-4 text-right text-white font-black">R${sale.total}</td>

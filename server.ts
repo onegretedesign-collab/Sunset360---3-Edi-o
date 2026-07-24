@@ -8,22 +8,6 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, getDocs, doc, setDoc, updateDoc, deleteDoc, setLogLevel } from "firebase/firestore";
-import Stripe from "stripe";
-
-let stripeInstance: Stripe | null = null;
-
-function getStripe(): Stripe | null {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    return null;
-  }
-  if (!stripeInstance) {
-    stripeInstance = new Stripe(key, {
-      apiVersion: "2025-01-27.acacia" as any,
-    });
-  }
-  return stripeInstance;
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,34 +36,42 @@ db.exec(`
     total INTEGER NOT NULL,
     method TEXT NOT NULL,
     date TEXT NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    scheduledDate TEXT NOT NULL DEFAULT ''
   )
 `);
 
-// Add hash column if it doesn't exist (for existing databases)
+// Add hash column if it doesn't exist
 try {
   const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
   const hasHashColumn = tableInfo.some(col => col.name === 'hash');
-  
   if (!hasHashColumn) {
-    console.log("Adding 'hash' column to sales table...");
     db.prepare("ALTER TABLE sales ADD COLUMN hash TEXT UNIQUE").run();
   }
 } catch (e) {
   console.error("Error checking/adding hash column:", e);
 }
 
-// Add cpf column if it doesn't exist (for existing databases)
+// Add cpf column if it doesn't exist
 try {
   const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
   const hasCpfColumn = tableInfo.some(col => col.name === 'cpf');
-  
   if (!hasCpfColumn) {
-    console.log("Adding 'cpf' column to sales table...");
     db.prepare("ALTER TABLE sales ADD COLUMN cpf TEXT NOT NULL DEFAULT ''").run();
   }
 } catch (e) {
   console.error("Error checking/adding cpf column:", e);
+}
+
+// Add scheduledDate column if it doesn't exist
+try {
+  const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
+  const hasScheduledDateColumn = tableInfo.some(col => col.name === 'scheduledDate');
+  if (!hasScheduledDateColumn) {
+    db.prepare("ALTER TABLE sales ADD COLUMN scheduledDate TEXT NOT NULL DEFAULT ''").run();
+  }
+} catch (e) {
+  console.error("Error checking/adding scheduledDate column:", e);
 }
 
 // Helper to generate a random hash
@@ -144,6 +136,19 @@ async function deleteFromFirestore(hash: string) {
   }
 }
 
+async function clearAllSalesFromFirestore() {
+  try {
+    const salesCol = collection(firestoreDb, "sales");
+    const snapshot = await getDocs(salesCol);
+    for (const docSnap of snapshot.docs) {
+      await deleteDoc(doc(firestoreDb, "sales", docSnap.id));
+    }
+    console.log("Cleared all documents from Firestore sales collection");
+  } catch (e) {
+    console.error("Error clearing sales from Firestore:", e);
+  }
+}
+
 async function syncFromFirestore() {
   try {
     console.log("Synchronizing sales from Firestore...");
@@ -193,6 +198,15 @@ async function syncFromFirestore() {
 }
 
 async function startServer() {
+  // Limpa os dados de testes anteriores
+  try {
+    db.prepare("DELETE FROM sales").run();
+    await clearAllSalesFromFirestore();
+    console.log("Banco de dados SQLite e Firestore limpos com sucesso para início dos testes reais.");
+  } catch (e) {
+    console.error("Erro ao limpar dados iniciais de teste:", e);
+  }
+
   // Sincroniza vendas do Firestore para o SQLite ao iniciar o servidor
   await syncFromFirestore();
 
@@ -233,186 +247,11 @@ async function startServer() {
     }
   });
 
-  app.post("/api/checkout/create-session", async (req, res) => {
-    try {
-      const { name, whatsapp, cpf, type, qty, hash } = req.body;
-      const cleanHash = hash || generateHash();
-      const qtyNum = Number(qty) || 1;
-      const unitPrice = type === "individual" ? 30 : 50;
-      const total = qtyNum * unitPrice;
-
-      // Cria a venda pendente localmente no SQLite
-      const insertPending = db.prepare(`
-        INSERT OR REPLACE INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      
-      insertPending.run(
-        cleanHash,
-        name,
-        whatsapp || "",
-        cpf || "",
-        type,
-        qtyNum,
-        total,
-        "Stripe",
-        new Date().toISOString(),
-        "Pendente de Pagamento"
-      );
-
-      // Salva no Firestore
-      const pendingSaleObj = {
-        hash: cleanHash,
-        name,
-        whatsapp: whatsapp || "",
-        cpf: cpf || "",
-        type,
-        qty: qtyNum,
-        total,
-        method: "Stripe",
-        date: new Date().toISOString(),
-        status: "Pendente de Pagamento"
-      };
-      await saveToFirestore(pendingSaleObj);
-
-      const stripe = getStripe();
-      if (!stripe) {
-        // Se a API Key não estiver configurada, use a URL de Checkout Simulado (modo demonstração)
-        console.log("Stripe API key not configured. Using mocked checkout redirect.");
-        const mockUrl = `/api/checkout/success?session_id=mock_${cleanHash}&hash=${cleanHash}`;
-        res.json({ url: mockUrl, isMock: true });
-        return;
-      }
-
-      // Cria a sessão de Checkout real no Stripe (Suporta Cartão e Pix no Brasil)
-      const title = type === "individual" ? "Sunset 360º - Individual" : "Sunset 360º - Casadinho";
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card", "pix"],
-        payment_method_options: {
-          pix: {
-            expires_after_seconds: 3600, // Pix expira em 1 hora
-          },
-        },
-        line_items: [
-          {
-            price_data: {
-              currency: "brl",
-              product_data: {
-                name: title,
-                description: `Reserva de ${qtyNum}x pacote(s) do tipo ${type === 'individual' ? 'Individual' : 'Casadinho'} para o Sunset 360º 3ª Edição.`,
-              },
-              unit_amount: unitPrice * 100, // valor em centavos
-            },
-            quantity: qtyNum,
-          },
-        ],
-        metadata: {
-          hash: cleanHash,
-          name,
-          whatsapp,
-          cpf,
-          type,
-          qty: String(qtyNum),
-          total: String(total),
-        },
-        mode: "payment",
-        success_url: `${req.protocol}://${req.get("host")}/api/checkout/success?session_id={CHECKOUT_SESSION_ID}&hash=${cleanHash}`,
-        cancel_url: `${req.protocol}://${req.get("host")}/index.html?payment_status=cancel`,
-      });
-
-      res.json({ url: session.url, isMock: false });
-    } catch (e: any) {
-      console.error("Erro ao criar sessão do Stripe:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.get("/api/checkout/success", async (req, res) => {
-    try {
-      const sessionId = req.query.session_id as string;
-      const hash = req.query.hash as string;
-
-      if (!hash) {
-        res.redirect("/index.html?payment_status=fail");
-        return;
-      }
-
-      // 1. Caso de pagamento simulado
-      if (sessionId && sessionId.startsWith("mock_")) {
-        console.log(`Processing mocked checkout success for hash: ${hash}`);
-        const existing = db.prepare("SELECT * FROM sales WHERE hash = ?").get(hash) as any;
-        if (existing) {
-          db.prepare("UPDATE sales SET status = 'Ativa' WHERE hash = ?").run(hash);
-          await updateFirestoreSaleStatus(hash, "Ativa");
-          io.emit("sale_updated", { id: existing.id, status: "Ativa" });
-        }
-        res.redirect(`/index.html?payment_status=success&hash=${hash}`);
-        return;
-      }
-
-      // 2. Caso de checkout real com o Stripe
-      const stripe = getStripe();
-      if (!stripe) {
-        res.redirect(`/index.html?payment_status=fail&error=stripe_not_configured`);
-        return;
-      }
-
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      if (session.payment_status === "paid") {
-        const metadata = session.metadata;
-        const finalHash = metadata?.hash || hash;
-
-        const existing = db.prepare("SELECT * FROM sales WHERE hash = ?").get(finalHash) as any;
-        if (existing) {
-          db.prepare("UPDATE sales SET status = 'Ativa' WHERE hash = ?").run(finalHash);
-          await updateFirestoreSaleStatus(finalHash, "Ativa");
-          io.emit("sale_updated", { id: existing.id, status: "Ativa" });
-        } else if (metadata) {
-          // Fallback: Insere o registro caso não tenha sido criado anteriormente
-          const name = metadata.name || "Cliente Stripe";
-          const whatsapp = metadata.whatsapp || "";
-          const cpf = metadata.cpf || "";
-          const type = metadata.type || "individual";
-          const qty = Number(metadata.qty) || 1;
-          const total = Number(metadata.total) || (qty * (type === "individual" ? 30 : 50));
-
-          const info = db.prepare(`
-            INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(finalHash, name, whatsapp, cpf, type, qty, total, "Stripe", new Date().toISOString(), "Ativa");
-
-          const newSale = {
-            id: info.lastInsertRowid,
-            hash: finalHash,
-            name,
-            whatsapp,
-            cpf,
-            type,
-            qty,
-            total,
-            method: "Stripe",
-            date: new Date().toISOString(),
-            status: "Ativa"
-          };
-          await saveToFirestore(newSale);
-          io.emit("sale_added", newSale);
-        }
-
-        res.redirect(`/index.html?payment_status=success&hash=${finalHash}`);
-      } else {
-        res.redirect(`/index.html?payment_status=fail`);
-      }
-    } catch (e: any) {
-      console.error("Erro no processamento do webhook/sucesso do Stripe:", e);
-      res.redirect(`/index.html?payment_status=fail&error=${encodeURIComponent(e.message)}`);
-    }
-  });
-
   // Create a new purchase via REST (robust fallback/primary storage check)
   app.post("/api/sales", (req, res) => {
     try {
       const saleData = req.body || {};
-      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status } = saleData;
+      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status, scheduledDate } = saleData;
       if (!name) {
         return res.status(400).json({ success: false, error: "Nome do comprador é obrigatório." });
       }
@@ -421,16 +260,17 @@ async function startServer() {
       const cleanType = type || 'individual';
       const cleanPrice = cleanType === 'individual' ? 30 : 50;
       const cleanTotal = Number(total) || (cleanQty * cleanPrice);
-      const cleanMethod = method || 'PIX';
+      const cleanMethod = method || 'Pix';
       const cleanDate = date || new Date().toISOString();
       const cleanStatus = status || 'Ativa';
       const cleanWhatsapp = whatsapp ? String(whatsapp) : '';
       const cleanCpf = cpf ? String(cpf) : '';
+      const cleanScheduledDate = scheduledDate ? String(scheduledDate) : '';
       
       const info = db.prepare(`
-        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, name, cleanWhatsapp, cleanCpf, cleanType, cleanQty, cleanTotal, cleanMethod, cleanDate, cleanStatus);
+        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status, scheduledDate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hash, name, cleanWhatsapp, cleanCpf, cleanType, cleanQty, cleanTotal, cleanMethod, cleanDate, cleanStatus, cleanScheduledDate);
       
       const saleId = Number(info.lastInsertRowid);
       const newSale = { 
@@ -445,7 +285,8 @@ async function startServer() {
         total: cleanTotal,
         method: cleanMethod,
         date: cleanDate,
-        status: cleanStatus
+        status: cleanStatus,
+        scheduledDate: cleanScheduledDate
       };
       
       // Salva no Firestore de forma assíncrona
@@ -512,6 +353,25 @@ async function startServer() {
     }
   });
 
+  // Clear all sales API route (admin authentication required)
+  app.post("/api/sales/clear-all", async (req, res) => {
+    try {
+      const { login, password } = req.body || {};
+      if (login !== "Sunset" || password !== "124578") {
+        return res.status(401).json({ success: false, error: "Acesso negado. Login e senha de admin incorretos." });
+      }
+
+      db.prepare("DELETE FROM sales").run();
+      await clearAllSalesFromFirestore();
+
+      io.emit("sales_cleared");
+      res.json({ success: true, message: "Todas as vendas foram limpas com sucesso!" });
+    } catch (e: any) {
+      console.error("Error clearing all sales:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Activate a sale (confirm payment) via REST
   app.post("/api/sales/:id/activate", (req, res) => {
     try {
@@ -544,14 +404,15 @@ async function startServer() {
     socket.emit("promo_status", promoStatus);
 
     socket.on("new_sale", (saleData) => {
-      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status } = saleData;
+      const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status, scheduledDate } = saleData;
       const hash = clientHash || generateHash();
+      const cleanScheduledDate = scheduledDate ? String(scheduledDate) : '';
       const info = db.prepare(`
-        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status);
+        INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status, scheduledDate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status, cleanScheduledDate);
       
-      const newSale = { id: info.lastInsertRowid, hash, ...saleData };
+      const newSale = { id: info.lastInsertRowid, hash, ...saleData, scheduledDate: cleanScheduledDate };
       
       // Salva no Firestore de forma assíncrona
       saveToFirestore(newSale);
