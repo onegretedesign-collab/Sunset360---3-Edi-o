@@ -411,16 +411,42 @@ async function startServer() {
   // Create a new purchase via REST (robust fallback/primary storage check)
   app.post("/api/sales", (req, res) => {
     try {
-      const saleData = req.body;
+      const saleData = req.body || {};
       const { hash: clientHash, name, whatsapp, cpf, type, qty, total, method, date, status } = saleData;
+      if (!name) {
+        return res.status(400).json({ success: false, error: "Nome do comprador é obrigatório." });
+      }
       const hash = clientHash || generateHash();
+      const cleanQty = Number(qty) || 1;
+      const cleanType = type || 'individual';
+      const cleanPrice = cleanType === 'individual' ? 30 : 50;
+      const cleanTotal = Number(total) || (cleanQty * cleanPrice);
+      const cleanMethod = method || 'PIX';
+      const cleanDate = date || new Date().toISOString();
+      const cleanStatus = status || 'Ativa';
+      const cleanWhatsapp = whatsapp ? String(whatsapp) : '';
+      const cleanCpf = cpf ? String(cpf) : '';
       
       const info = db.prepare(`
         INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(hash, name, whatsapp || '', cpf || '', type, qty, total, method, date, status);
+      `).run(hash, name, cleanWhatsapp, cleanCpf, cleanType, cleanQty, cleanTotal, cleanMethod, cleanDate, cleanStatus);
       
-      const newSale = { id: info.lastInsertRowid, hash, ...saleData };
+      const saleId = Number(info.lastInsertRowid);
+      const newSale = { 
+        ...saleData, 
+        id: saleId, 
+        hash,
+        name,
+        whatsapp: cleanWhatsapp,
+        cpf: cleanCpf,
+        type: cleanType,
+        qty: cleanQty,
+        total: cleanTotal,
+        method: cleanMethod,
+        date: cleanDate,
+        status: cleanStatus
+      };
       
       // Salva no Firestore de forma assíncrona
       saveToFirestore(newSale);
@@ -431,7 +457,7 @@ async function startServer() {
       res.status(201).json({ success: true, sale: newSale });
     } catch (e: any) {
       console.error("Error creating sale via API:", e);
-      res.status(500).json({ success: false, error: e.message });
+      res.status(500).json({ success: false, error: e.message || "Erro ao salvar no banco de dados" });
     }
   });
 

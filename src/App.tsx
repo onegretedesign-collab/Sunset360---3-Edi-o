@@ -1099,9 +1099,9 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: userData.name,
-          whatsapp: userData.whatsapp.replace(/\D/g, ''),
-          cpf: userData.cpf.replace(/\D/g, ''),
+          name: userData.name || '',
+          whatsapp: (userData.whatsapp || '').replace(/\D/g, ''),
+          cpf: (userData.cpf || '').replace(/\D/g, ''),
           type: ticketType,
           qty: ticketsCount,
           hash: generatedHash,
@@ -1116,9 +1116,9 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
         const tempTicket = {
           id: Date.now(),
           hash: generatedHash,
-          name: userData.name,
-          whatsapp: userData.whatsapp.replace(/\D/g, ''),
-          cpf: userData.cpf.replace(/\D/g, ''),
+          name: userData.name || '',
+          whatsapp: (userData.whatsapp || '').replace(/\D/g, ''),
+          cpf: (userData.cpf || '').replace(/\D/g, ''),
           type: ticketType,
           qty: ticketsCount,
           cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
@@ -1174,9 +1174,9 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     
     const saleData = {
       hash: generatedHash,
-      name: userData.name,
-      whatsapp: userData.whatsapp.replace(/\D/g, ''),
-      cpf: userData.cpf.replace(/\D/g, ''),
+      name: userData.name || '',
+      whatsapp: (userData.whatsapp || '').replace(/\D/g, ''),
+      cpf: (userData.cpf || '').replace(/\D/g, ''),
       type: ticketType,
       qty: ticketsCount,
       cups: (ticketType === 'individual' ? 1 : 2) * ticketsCount,
@@ -1241,12 +1241,12 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
     const newErrors = { name: '', whatsapp: '', cpf: '' };
     let isValid = true;
 
-    if (manualSaleData.name.trim().length < 3) {
+    if (!manualSaleData.name || manualSaleData.name.trim().length < 3) {
       newErrors.name = 'O nome deve ter pelo menos 3 caracteres.';
       isValid = false;
     }
 
-    const whatsappDigits = manualSaleData.whatsapp.replace(/\D/g, '');
+    const whatsappDigits = (manualSaleData.whatsapp || '').replace(/\D/g, '');
     if (whatsappDigits.length < 10 || whatsappDigits.length > 11) {
       newErrors.whatsapp = 'Informe um WhatsApp válido com DDD (ex: 64999999999).';
       isValid = false;
@@ -1263,18 +1263,21 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
 
     if (isValid) {
       const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      const currentPrice = PRICES[manualSaleData.type as keyof typeof PRICES];
+      const currentPrice = PRICES[manualSaleData.type as keyof typeof PRICES] || 30;
+      const cleanWhatsapp = (manualSaleData.whatsapp || '').replace(/\D/g, '');
+      const cleanCpf = (manualSaleData.cpf || '').replace(/\D/g, '');
+
       const sale = {
         hash: generatedHash,
-        name: manualSaleData.name,
-        whatsapp: manualSaleData.whatsapp.replace(/\D/g, ''),
-        cpf: manualSaleData.cpf.replace(/\D/g, ''),
+        name: manualSaleData.name.trim(),
+        whatsapp: cleanWhatsapp,
+        cpf: cleanCpf,
         type: manualSaleData.type,
-        qty: manualSaleData.qty,
-        cups: (manualSaleData.type === 'individual' ? 1 : 2) * manualSaleData.qty,
-        wristbands: (manualSaleData.type === 'individual' ? 1 : 2) * manualSaleData.qty,
-        total: manualSaleData.qty * currentPrice,
-        method: manualSaleData.method,
+        qty: Number(manualSaleData.qty) || 1,
+        cups: (manualSaleData.type === 'individual' ? 1 : 2) * (Number(manualSaleData.qty) || 1),
+        wristbands: (manualSaleData.type === 'individual' ? 1 : 2) * (Number(manualSaleData.qty) || 1),
+        total: (Number(manualSaleData.qty) || 1) * currentPrice,
+        method: manualSaleData.method || 'PIX',
         date: new Date().toISOString(),
         status: manualSaleData.status || 'Ativa'
       };
@@ -1285,8 +1288,15 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(sale)
         });
-        const result = await response.json();
-        if (result.success) {
+        
+        let result: any = {};
+        try {
+          result = await response.json();
+        } catch (jsonErr) {
+          console.error("Erro ao converter resposta em JSON:", jsonErr);
+        }
+
+        if (response.ok && result.success) {
           triggerToast("Venda manual registrada com sucesso e lançada no dashboard!", "success");
           
           setManualSaleData({
@@ -1303,13 +1313,13 @@ https://www.instagram.com/sunset360_3edicao?utm_source=qr`;
           fetchSalesReport();
           
           // Executa a notificação via WhatsApp para ambos
-          sendWhatsAppNotification(result.sale);
+          sendWhatsAppNotification(result.sale || sale);
         } else {
-          triggerToast("Erro ao registrar venda: " + result.error, "error");
+          triggerToast("Erro ao registrar venda: " + (result.error || response.statusText || "Erro no servidor"), "error");
         }
       } catch (err: any) {
         console.error("Erro ao registrar venda manual:", err);
-        triggerToast("Erro ao conectar com o servidor.", "error");
+        triggerToast("Erro de conexão com o servidor ao salvar venda.", "error");
       }
     }
   };
