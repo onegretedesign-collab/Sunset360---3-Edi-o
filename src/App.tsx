@@ -37,7 +37,12 @@ import {
   Check,
   X,
   Printer,
-  Calendar
+  Calendar,
+  Pencil,
+  Edit,
+  Save,
+  Plus,
+  Minus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
@@ -349,6 +354,15 @@ const App = () => {
   // Relatório de Vendas (Sincronizado via WebSocket)
   const [salesReport, setSalesReport] = useState<any[]>([]);
   const [socket, setSocket] = useState<any>(null);
+
+  // Estado para Edição de Venda e Quantidade
+  const [editingSale, setEditingSale] = useState<any>(null);
+  const [editName, setEditName] = useState<string>('');
+  const [editType, setEditType] = useState<string>('individual');
+  const [editQty, setEditQty] = useState<number>(1);
+  const [editStatus, setEditStatus] = useState<string>('Ativa');
+  const [editMethod, setEditMethod] = useState<string>('Pix');
+  const [editScheduledDate, setEditScheduledDate] = useState<string>('');
 
   const [promoEnded, setPromoEnded] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -1347,6 +1361,59 @@ const App = () => {
           });
       }
     );
+  };
+
+  const handleOpenEditModal = (sale: any) => {
+    setEditingSale(sale);
+    setEditName(sale.name || '');
+    setEditType(sale.type || 'individual');
+    setEditQty(Number(sale.qty) || 1);
+    setEditStatus(sale.status || 'Ativa');
+    setEditMethod(sale.method || 'Pix');
+    setEditScheduledDate(sale.scheduledDate || '');
+  };
+
+  const handleSaveEditSale = async () => {
+    if (!editingSale) return;
+    if (!editName.trim()) {
+      triggerToast("O nome do titular é obrigatório.", "error");
+      return;
+    }
+    if (editQty < 1) {
+      triggerToast("A quantidade deve ser de pelo menos 1.", "error");
+      return;
+    }
+
+    const unitPrice = editType === 'individual' ? 30 : 50;
+    const newTotal = editQty * unitPrice;
+
+    try {
+      const response = await fetch(`/api/sales/${editingSale.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          type: editType,
+          qty: editQty,
+          total: newTotal,
+          status: editStatus,
+          method: editMethod,
+          scheduledDate: editScheduledDate
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSalesReport(prev => prev.map(s => s.id === editingSale.id ? data.sale : s));
+        triggerToast("Venda e quantidade atualizadas com sucesso!", "success");
+        setEditingSale(null);
+      } else {
+        triggerToast("Erro ao salvar alterações: " + (data.error || "Erro no servidor"), "error");
+      }
+    } catch (err) {
+      console.error("Erro ao atualizar venda:", err);
+      triggerToast("Erro de conexão ao salvar alterações.", "error");
+    }
   };
 
   const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
@@ -2544,31 +2611,77 @@ const App = () => {
                       <div className="p-10 text-center text-neutral-600 italic text-[10px] uppercase font-black">Nenhuma venda registrada ainda.</div>
                     ) : (
                       <table className="w-full text-left text-[10px] font-black uppercase tracking-tighter italic">
-                        <thead><tr className="text-neutral-500 border-b border-neutral-800 uppercase bg-neutral-950/50 leading-tight">
-                            <th className="p-4 italic">Titular</th><th className="p-4 text-center italic">Tipo</th><th className="p-4 text-center italic">Status</th><th className="p-4 text-right italic text-orange-500">Eliminar</th>
-                        </tr></thead>
+                        <thead>
+                          <tr className="text-neutral-500 border-b border-neutral-800 uppercase bg-neutral-950/50 leading-tight">
+                            <th className="p-4 italic">Titular</th>
+                            <th className="p-4 text-center italic">Qtd / Tipo</th>
+                            <th className="p-4 text-center italic">Status</th>
+                            <th className="p-4 text-right italic text-orange-500">Ações</th>
+                          </tr>
+                        </thead>
                         <tbody className="divide-y divide-neutral-800 font-bold italic">
                           {salesReport.filter(sale => 
                             sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
                             sale.status.toLowerCase().includes(adminSearch.toLowerCase())
                           ).map((sale, index) => (
                             <tr key={sale.hash ? `admin-sale-${sale.hash}` : `admin-sale-${sale.id || index}-${index}`} className="hover:bg-orange-500/5 transition-colors group">
-                              <td className="p-4 font-black text-white italic truncate max-w-[80px] leading-none">{sale.name}</td>
-                              <td className="p-4 text-center text-orange-500 italic font-black text-[8px] tracking-tighter leading-none">{sale.type}</td>
-                              <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
-                                <span className={`${sale.status === 'Ativa' ? 'text-green-500' : sale.status === 'Entregue' ? 'text-blue-500' : 'text-neutral-500'}`}>{sale.status} {sale.status === 'Entregue' && '✅'}</span>
+                              <td className="p-4 font-black text-white italic truncate max-w-[110px] leading-tight">
+                                <div>{sale.name}</div>
+                                <div className="text-[8px] text-neutral-400 font-normal tracking-normal mt-0.5">
+                                  <span>{sale.method || 'Pix'}</span>
+                                  {sale.scheduledDate && (
+                                    <span className="text-orange-400 block font-bold">📅 Pagar em: {sale.scheduledDate.split('-').reverse().join('/')}</span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="p-4 text-right flex justify-end gap-2">
-                                {sale.status !== 'Entregue' && (
+                              <td className="p-4 text-center text-orange-500 italic font-black text-[9px] tracking-tighter leading-none">
+                                {sale.qty}x {sale.type}
+                                <div className="text-neutral-400 text-[8px] font-normal mt-0.5">R$ {sale.total},00</div>
+                              </td>
+                              <td className="p-4 text-center italic font-black text-[8px] tracking-tighter leading-none whitespace-nowrap">
+                                <span className={`${
+                                  sale.status === 'Ativa' 
+                                    ? 'text-green-500' 
+                                    : sale.status === 'Entregue' 
+                                      ? 'text-blue-500' 
+                                      : 'text-amber-500'
+                                }`}>
+                                  {sale.status} {sale.status === 'Entregue' && '✅'} {sale.status === 'Pendente de Pagamento' && '⏳'}
+                                </span>
+                              </td>
+                              <td className="p-4 text-right flex justify-end items-center gap-1">
+                                {sale.status !== 'Ativa' && sale.status !== 'Entregue' && (
+                                  <button 
+                                    onClick={() => activateSale(sale)} 
+                                    className="p-1.5 text-amber-500 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
+                                    title="Confirmar Pagamento / Ativar Venda"
+                                  >
+                                    <CheckCircle2 size={16} />
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={() => handleOpenEditModal(sale)} 
+                                  className="p-1.5 text-neutral-400 hover:text-orange-500 hover:bg-orange-500/10 rounded-lg transition-all"
+                                  title="Editar Quantidade e Detalhes"
+                                >
+                                  <Pencil size={15} />
+                                </button>
+                                {sale.status === 'Ativa' && (
                                   <button 
                                     onClick={() => confirmDelivery(sale)} 
-                                    className="p-2 text-neutral-700 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all shadow-sm"
+                                    className="p-1.5 text-neutral-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all"
                                     title="Confirmar Entrega"
                                   >
                                     <CheckCircle2 size={16} />
                                   </button>
                                 )}
-                                <button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all shadow-sm"><Trash2 size={16} /></button>
+                                <button 
+                                  onClick={() => deleteSale(sale.id)} 
+                                  className="p-1.5 text-neutral-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                                  title="Apagar Compra"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
                               </td>
                             </tr>
                           ))}
@@ -2683,26 +2796,37 @@ const App = () => {
                                 {sale.status} {sale.status === 'Entregue' && '✅'} {sale.status === 'Pendente de Pagamento' && '⏳'}
                               </span>
                             </td>
-                            <td className="p-4 text-right flex justify-end gap-2">
-                              {sale.status === 'Pendente de Pagamento' && (
+                            <td className="p-4 text-right flex justify-end items-center gap-1">
+                              {sale.status !== 'Ativa' && sale.status !== 'Entregue' && (
                                 <button 
                                   onClick={() => activateSale(sale)} 
-                                  className="p-2 text-amber-500 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
+                                  className="p-1.5 text-amber-500 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
                                   title="Confirmar Pagamento / Ativar Venda"
                                 >
                                   <CheckCircle2 size={14} />
                                 </button>
                               )}
+                              <button 
+                                onClick={() => handleOpenEditModal(sale)} 
+                                className="p-1.5 text-neutral-400 hover:text-orange-500 hover:bg-orange-500/10 rounded-lg transition-all"
+                                title="Editar Quantidade e Detalhes"
+                              >
+                                <Pencil size={14} />
+                              </button>
                               {sale.status === 'Ativa' && (
                                 <button 
                                   onClick={() => confirmDelivery(sale)} 
-                                  className="p-2 text-neutral-700 hover:text-green-500 hover:bg-green-500/10 rounded-lg transition-all"
+                                  className="p-1.5 text-neutral-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all"
                                   title="Confirmar Entrega"
                                 >
                                   <CheckCircle2 size={14} />
                                 </button>
                               )}
-                              <button onClick={() => deleteSale(sale.id)} className="p-2 text-neutral-700 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all">
+                              <button 
+                                onClick={() => deleteSale(sale.id)} 
+                                className="p-1.5 text-neutral-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                                title="Apagar Compra"
+                              >
                                 <Trash2 size={14} />
                               </button>
                             </td>
@@ -2877,6 +3001,137 @@ const App = () => {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Modal de Edição de Compra / Quantidade */}
+      <AnimatePresence>
+        {editingSale && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-neutral-900 border border-neutral-800 p-6 rounded-3xl max-w-md w-full shadow-2xl space-y-5 text-white font-bold italic"
+            >
+              <div className="flex justify-between items-center border-b border-neutral-800 pb-3">
+                <h3 className="text-base font-black uppercase text-orange-500 tracking-tight flex items-center gap-2">
+                  <Pencil size={18} /> Editar Compra / Quantidade
+                </h3>
+                <button 
+                  onClick={() => setEditingSale(null)}
+                  className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Nome do Titular</label>
+                  <input 
+                    type="text" 
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-orange-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Tipo de Ingresso</label>
+                  <select 
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-orange-500"
+                  >
+                    <option value="individual">Individual (R$ 30,00)</option>
+                    <option value="casadinho">Casadinho (R$ 50,00)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Quantidade de Pacotes</label>
+                  <div className="flex items-center gap-3 bg-neutral-950 border border-neutral-800 rounded-xl p-2 justify-between">
+                    <button 
+                      type="button"
+                      onClick={() => setEditQty(prev => Math.max(1, prev - 1))}
+                      className="w-9 h-9 rounded-lg bg-neutral-800 text-orange-500 font-black hover:bg-neutral-700 flex items-center justify-center text-xl active:scale-90 transition-transform"
+                    >
+                      -
+                    </button>
+                    <span className="text-lg font-black text-white">{editQty}</span>
+                    <button 
+                      type="button"
+                      onClick={() => setEditQty(prev => prev + 1)}
+                      className="w-9 h-9 rounded-lg bg-neutral-800 text-orange-500 font-black hover:bg-neutral-700 flex items-center justify-center text-xl active:scale-90 transition-transform"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-orange-400 font-black mt-1.5">
+                    💰 Total Calculado: R$ {(editQty * (editType === 'individual' ? 30 : 50))},00
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Status do Pagamento / Compra</label>
+                  <select 
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-orange-500"
+                  >
+                    <option value="Ativa">Ativa (Pagamento Confirmado)</option>
+                    <option value="Pendente de Pagamento">Pendente de Pagamento</option>
+                    <option value="Entregue">Entregue (Pulseira Retirada)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Forma de Pagamento</label>
+                  <select 
+                    value={editMethod}
+                    onChange={(e) => setEditMethod(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-orange-500"
+                  >
+                    <option value="Pix">Pix</option>
+                    <option value="Cartão de Crédito">Cartão de Crédito</option>
+                    <option value="Cartão de Débito">Cartão de Débito</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Agendamento / Crediário">Agendamento / Crediário</option>
+                  </select>
+                </div>
+
+                {editMethod.includes('Agendamento') && (
+                  <div>
+                    <label className="text-[10px] text-neutral-400 font-black uppercase block mb-1">Data Agendada para Pagamento</label>
+                    <input 
+                      type="date"
+                      value={editScheduledDate}
+                      onChange={(e) => setEditScheduledDate(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-white font-bold outline-none focus:border-orange-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setEditingSale(null)}
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-black py-3 rounded-xl uppercase text-[10px] tracking-widest transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleSaveEditSale}
+                  className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-black py-3 rounded-xl uppercase text-[10px] tracking-widest transition-all shadow-lg shadow-orange-600/30 flex items-center justify-center gap-1.5"
+                >
+                  <Save size={14} /> Salvar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <img 
         id="pdf-logo-img" 
         src="https://i.postimg.cc/GmNCwhV0/LOGO-EVENTO-SUNSET-360-3-EDICAO.png" 

@@ -198,15 +198,6 @@ async function syncFromFirestore() {
 }
 
 async function startServer() {
-  // Limpa os dados de testes anteriores
-  try {
-    db.prepare("DELETE FROM sales").run();
-    await clearAllSalesFromFirestore();
-    console.log("Banco de dados SQLite e Firestore limpos com sucesso para início dos testes reais.");
-  } catch (e) {
-    console.error("Erro ao limpar dados iniciais de teste:", e);
-  }
-
   // Sincroniza vendas do Firestore para o SQLite ao iniciar o servidor
   await syncFromFirestore();
 
@@ -390,6 +381,59 @@ async function startServer() {
       res.json({ success: true, message: "Status atualizado para Ativa com sucesso." });
     } catch (e: any) {
       console.error("Error activating sale via API:", e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Edit / Update sale endpoint via REST
+  app.put("/api/sales/:id", (req, res) => {
+    try {
+      const saleId = req.params.id;
+      const { name, type, qty, total, method, status, scheduledDate } = req.body || {};
+
+      const existingSale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId) as any;
+      if (!existingSale) {
+        return res.status(404).json({ success: false, error: "Venda não encontrada" });
+      }
+
+      const cleanQty = qty !== undefined && Number(qty) > 0 ? Number(qty) : existingSale.qty;
+      const cleanType = type !== undefined ? type : existingSale.type;
+      const cleanPrice = cleanType === 'individual' ? 30 : 50;
+      const cleanTotal = total !== undefined ? Number(total) : (cleanQty * cleanPrice);
+      const cleanName = name !== undefined && String(name).trim() !== '' ? String(name).trim() : existingSale.name;
+      const cleanMethod = method !== undefined ? String(method) : existingSale.method;
+      const cleanStatus = status !== undefined ? String(status) : existingSale.status;
+      const cleanScheduledDate = scheduledDate !== undefined ? String(scheduledDate) : (existingSale.scheduledDate || '');
+
+      db.prepare(`
+        UPDATE sales 
+        SET name = ?, type = ?, qty = ?, total = ?, method = ?, status = ?, scheduledDate = ?
+        WHERE id = ?
+      `).run(cleanName, cleanType, cleanQty, cleanTotal, cleanMethod, cleanStatus, cleanScheduledDate, saleId);
+
+      const updatedSale = {
+        ...existingSale,
+        id: Number(saleId),
+        name: cleanName,
+        type: cleanType,
+        qty: cleanQty,
+        total: cleanTotal,
+        method: cleanMethod,
+        status: cleanStatus,
+        scheduledDate: cleanScheduledDate
+      };
+
+      // Save to Firestore asynchronously
+      if (updatedSale.hash) {
+        saveToFirestore(updatedSale);
+      }
+
+      // Emit socket event for real-time dashboard updates
+      io.emit("sale_updated", updatedSale);
+
+      res.json({ success: true, sale: updatedSale });
+    } catch (e: any) {
+      console.error("Error updating sale via API:", e);
       res.status(500).json({ success: false, error: e.message });
     }
   });
