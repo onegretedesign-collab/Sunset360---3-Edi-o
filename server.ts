@@ -108,7 +108,8 @@ async function saveToFirestore(saleData: any) {
       total: Number(saleData.total),
       method: saleData.method,
       date: saleData.date,
-      status: saleData.status
+      status: saleData.status,
+      scheduledDate: saleData.scheduledDate || ''
     });
     console.log(`Saved sale to Firestore: ${saleData.hash}`);
   } catch (e) {
@@ -160,8 +161,8 @@ async function syncFromFirestore() {
     
     const checkHash = db.prepare("SELECT * FROM sales WHERE hash = ?");
     const insertSale = db.prepare(`
-      INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sales (hash, name, whatsapp, cpf, type, qty, total, method, date, status, scheduledDate)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const updateSaleStatus = db.prepare("UPDATE sales SET status = ? WHERE hash = ?");
     
@@ -180,7 +181,8 @@ async function syncFromFirestore() {
             data.total,
             data.method,
             data.date,
-            data.status
+            data.status,
+            data.scheduledDate || ''
           );
           countNew++;
         } else if (existing.status !== data.status) {

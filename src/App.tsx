@@ -313,28 +313,49 @@ const App = () => {
   };
 
   // Simula uma nova venda para teste sonoro e visual no painel administrativo
-  const triggerTestNotification = () => {
+  const triggerTestNotification = async () => {
     const testNames = ['Eduardo Negrete', 'Mariana Alencar', 'Arthur Antunes', 'Nathália Nolêto', 'Rogério Negrete'];
     const randomName = testNames[Math.floor(Math.random() * testNames.length)];
     const randomType = Math.random() > 0.5 ? 'individual' : 'casadinho';
     const randomQty = Math.floor(Math.random() * 2) + 1;
-    
+    const unitPrice = randomType === 'individual' ? 30 : 50;
+    const generatedHash = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
     const mockSale = {
-      id: Date.now(),
+      hash: generatedHash,
       name: randomName + " (Simulação)",
+      whatsapp: "64999999999",
+      cpf: "",
       type: randomType,
       qty: randomQty,
-      paymentMethod: 'pix',
-      date: new Date().toISOString()
+      cups: (randomType === 'individual' ? 1 : 2) * randomQty,
+      wristbands: (randomType === 'individual' ? 1 : 2) * randomQty,
+      total: randomQty * unitPrice,
+      method: 'Pix',
+      date: new Date().toISOString(),
+      status: 'Ativa',
+      scheduledDate: ''
     };
-    
-    const notifId = Date.now().toString() + '-' + Math.floor(Math.random() * 1000);
-    setAdminNotifications(prev => {
-      if (prev.some(item => item.id === mockSale.id)) return prev;
-      return [...prev, { notifId, ...mockSale }];
-    });
-    
+
     playNotificationSound();
+
+    try {
+      const response = await fetch('/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mockSale)
+      });
+      const result = await response.json();
+      if (result.success && result.sale) {
+        setSalesReport(prev => {
+          if (prev.some(s => s.id === result.sale.id || s.hash === result.sale.hash)) return prev;
+          return [result.sale, ...prev];
+        });
+        triggerToast("Venda simulada com sucesso e adicionada ao Dashboard!", "success");
+      }
+    } catch (err) {
+      console.error("Erro ao simular venda:", err);
+    }
   };
 
   // URL da Imagem do Banner (Logo Oficial)
@@ -1260,6 +1281,15 @@ const App = () => {
         if (response.ok && result.success) {
           triggerToast("Venda registrada e salva no dashboard com sucesso!", "success");
           
+          if (result.sale) {
+            setSalesReport(prev => {
+              if (prev.some(s => s.id === result.sale.id || (s.hash && s.hash === result.sale.hash))) {
+                return prev.map(s => (s.id === result.sale.id || s.hash === result.sale.hash) ? result.sale : s);
+              }
+              return [result.sale, ...prev];
+            });
+          }
+
           setManualSaleData({
             name: '',
             whatsapp: '',
@@ -1416,11 +1446,17 @@ const App = () => {
     }
   };
 
-  const individualSalesCount = salesReport.filter(sale => sale.type === 'individual').reduce((acc, sale) => acc + sale.qty, 0);
-  const casadinhoSalesCount = salesReport.filter(sale => sale.type === 'casadinho').reduce((acc, sale) => acc + sale.qty, 0);
+  const individualSalesCount = salesReport
+    .filter(sale => (sale.type || '').toLowerCase() === 'individual')
+    .reduce((acc, sale) => acc + (Number(sale.qty) || 0), 0);
+
+  const casadinhoSalesCount = salesReport
+    .filter(sale => (sale.type || '').toLowerCase() === 'casadinho')
+    .reduce((acc, sale) => acc + (Number(sale.qty) || 0), 0);
+
   const totalCupsGiven = (individualSalesCount * 1) + (casadinhoSalesCount * 2);
   const totalSalesCount = individualSalesCount + casadinhoSalesCount;
-  const totalRevenue = salesReport.reduce((acc, sale) => acc + sale.total, 0);
+  const totalRevenue = salesReport.reduce((acc, sale) => acc + (Number(sale.total) || 0), 0);
   const isPromoSoldOut = promoEnded || totalCupsGiven >= PROMO_LIMIT;
 
   const handleSort = (key: string) => {
@@ -1433,8 +1469,8 @@ const App = () => {
 
   const getSortedSales = (sales: any[]) => {
     const filtered = sales.filter(sale => {
-      const matchesSearch = sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
-                           sale.status.toLowerCase().includes(adminSearch.toLowerCase());
+      const matchesSearch = (sale.name || '').toLowerCase().includes(adminSearch.toLowerCase()) || 
+                           (sale.status || '').toLowerCase().includes(adminSearch.toLowerCase());
       const matchesStatus = statusFilter === 'Todos' || sale.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
@@ -2604,7 +2640,7 @@ const App = () => {
                         onChange={(e) => setAdminSearch(e.target.value)}
                       />
                     </div>
-                    <span className="text-[10px] text-orange-500 font-black italic tracking-tighter whitespace-nowrap">{salesReport.filter(s => s.name.toLowerCase().includes(adminSearch.toLowerCase()) || s.status.toLowerCase().includes(adminSearch.toLowerCase())).length} PEDIDOS</span>
+                    <span className="text-[10px] text-orange-500 font-black italic tracking-tighter whitespace-nowrap">{salesReport.filter(s => (s.name || '').toLowerCase().includes(adminSearch.toLowerCase()) || (s.status || '').toLowerCase().includes(adminSearch.toLowerCase())).length} PEDIDOS</span>
                   </div>
                   <div className="overflow-x-auto">
                     {salesReport.length === 0 ? (
@@ -2621,8 +2657,8 @@ const App = () => {
                         </thead>
                         <tbody className="divide-y divide-neutral-800 font-bold italic">
                           {salesReport.filter(sale => 
-                            sale.name.toLowerCase().includes(adminSearch.toLowerCase()) || 
-                            sale.status.toLowerCase().includes(adminSearch.toLowerCase())
+                            (sale.name || '').toLowerCase().includes(adminSearch.toLowerCase()) || 
+                            (sale.status || '').toLowerCase().includes(adminSearch.toLowerCase())
                           ).map((sale, index) => (
                             <tr key={sale.hash ? `admin-sale-${sale.hash}` : `admin-sale-${sale.id || index}-${index}`} className="hover:bg-orange-500/5 transition-colors group">
                               <td className="p-4 font-black text-white italic truncate max-w-[110px] leading-tight">
